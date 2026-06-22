@@ -58,23 +58,53 @@ create table if not exists citation_payments (
   created_at timestamptz not null default now()
 );
 
+create table if not exists agent_decisions (
+  id uuid primary key default gen_random_uuid(),
+  run_id uuid not null references agent_runs(id) on delete cascade,
+  source_id uuid not null references sources(id) on delete cascade,
+  action text not null check (action in ('paid', 'cached', 'skipped')),
+  score integer not null check (score >= 0),
+  reason text not null,
+  price_micro_usdc integer not null check (price_micro_usdc > 0),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists paid_source_cache (
+  id uuid primary key default gen_random_uuid(),
+  content_hash text not null unique,
+  source_id uuid not null references sources(id) on delete cascade,
+  payment_id uuid references citation_payments(id) on delete set null,
+  publisher_id uuid not null references publishers(id) on delete cascade,
+  paid_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+
 create index if not exists sources_search_text_idx on sources using gin (to_tsvector('english', search_text));
 create index if not exists citation_payments_run_idx on citation_payments(run_id);
+create unique index if not exists citation_payments_transfer_unique_idx on citation_payments(network, transfer_id);
+create index if not exists agent_decisions_run_idx on agent_decisions(run_id);
+create index if not exists paid_source_cache_source_idx on paid_source_cache(source_id);
 
 alter table publishers enable row level security;
 alter table feeds enable row level security;
 alter table sources enable row level security;
 alter table agent_runs enable row level security;
 alter table citation_payments enable row level security;
+alter table agent_decisions enable row level security;
+alter table paid_source_cache enable row level security;
 
 alter table publishers force row level security;
 alter table feeds force row level security;
 alter table sources force row level security;
 alter table agent_runs force row level security;
 alter table citation_payments force row level security;
+alter table agent_decisions force row level security;
+alter table paid_source_cache force row level security;
 
 revoke all on table publishers from anon, authenticated;
 revoke all on table feeds from anon, authenticated;
 revoke all on table sources from anon, authenticated;
 revoke all on table agent_runs from anon, authenticated;
 revoke all on table citation_payments from anon, authenticated;
+revoke all on table agent_decisions from anon, authenticated;
+revoke all on table paid_source_cache from anon, authenticated;

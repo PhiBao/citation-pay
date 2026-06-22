@@ -54,6 +54,27 @@ export type CitationPayment = {
   created_at: string;
 };
 
+export type AgentDecisionRecord = {
+  id: string;
+  run_id: string;
+  source_id: string;
+  action: "paid" | "cached" | "skipped";
+  score: number;
+  reason: string;
+  price_micro_usdc: number;
+  created_at: string;
+};
+
+export type PaidSourceCache = {
+  id: string;
+  content_hash: string;
+  source_id: string;
+  payment_id: string | null;
+  publisher_id: string;
+  paid_at: string;
+  created_at: string;
+};
+
 export type SourceWithPublisher = Source & {
   publisher: Pick<Publisher, "id" | "name" | "wallet_address">;
 };
@@ -79,6 +100,7 @@ export type PaidSourceCard = {
 
 export type AgentDecision = {
   source: SourceWithPublisher;
+  score: number;
   reason: string;
 };
 
@@ -88,4 +110,6 @@ export type DashboardData = {
   sources: SourceWithPublisher[];
   runs: AgentRun[];
   payments: Array<CitationPayment & { source?: SourceWithPublisher; run?: AgentRun }>;
+  decisions: Array<AgentDecisionRecord & { source?: SourceWithPublisher; run?: AgentRun }>;
+  cache: Array<PaidSourceCache & { source?: SourceWithPublisher }>;
 };

@@ -1,0 +1,114 @@
+{
+  "generatedAt": "2026-06-22T08:32:15.470Z",
+  "status": "complete",
+  "runId": "c7d7a0bf-cd38-45ae-b403-ffb581f12210",
+  "network": "eip155:5042002",
+  "paymentMode": "real",
+  "spentMicroUsdc": 400,
+  "paymentCount": 4,
+  "totalPaymentCount": 8,
+  "decisionCount": 16,
+  "cacheCount": 4,
+  "maskedPayerWallet": "0x4Ba1...1D73",
+  "maskedSellerWallets": [
+    "0x25A2...8D80"
+  ],
+  "transferIds": [
+    "dc2f954a-bce3-46e4-8cec-64db1f6b6712",
+    "360d8f5a-154c-4a87-b379-69b79416af14",
+    "5c96603c-486c-4378-b40d-f0accf50d03f",
+    "f0380133-962c-42a3-97a6-5637490392d2"
+  ],
+  "selectedSourceTitles": [
+    "Trillion Dollar Security Day at Devconnect",
+    "Protocol Priorities Update for 2026",
+    "The Ethereum Foundation's Commitment to DeFi",
+    "The Promise of Ethereum: Introducing the EF Mandate"
+  ],
+  "ledger": [
+    {
+      "action": "paid",
+      "score": 24,
+      "priceMicroUsdc": 100,
+      "title": "Trillion Dollar Security Day at Devconnect",
+      "reason": "Paid because it scored 24 (16 relevance, 0 freshness, 6 price-fit), fits the budget, and same publisher as an earlier paid source. Remaining budget after purchase: $0.000600."
+    },
+    {
+      "action": "paid",
+      "score": 24,
+      "priceMicroUsdc": 100,
+      "title": "Protocol Priorities Update for 2026",
+      "reason": "Paid because it scored 24 (16 relevance, 0 freshness, 6 price-fit), fits the budget, and same publisher as an earlier paid source. Remaining budget after purchase: $0.000700."
+    },
+    {
+      "action": "paid",
+      "score": 24,
+      "priceMicroUsdc": 100,
+      "title": "The Ethereum Foundation's Commitment to DeFi",
+      "reason": "Paid because it scored 24 (16 relevance, 0 freshness, 6 price-fit), fits the budget, and same publisher as an earlier paid source. Remaining budget after purchase: $0.000800."
+    },
+    {
+      "action": "paid",
+      "score": 24,
+      "priceMicroUsdc": 100,
+      "title": "The Promise of Ethereum: Introducing the EF Mandate",
+      "reason": "Paid because it scored 24 (16 relevance, 0 freshness, 6 price-fit), fits the budget, and adds publisher diversity. Remaining budget after purchase: $0.000900."
+    },
+    {
+      "action": "skipped",
+      "score": 20,
+      "priceMicroUsdc": 100,
+      "title": "Checkpoint #9: Apr 2026",
+      "reason": "Skipped after the agent filled its four-citation answer set (8 relevance, 4 freshness, 6 price-fit)."
+    },
+    {
+      "action": "skipped",
+      "score": 20,
+      "priceMicroUsdc": 100,
+      "title": "ETH Rangers Program Recap",
+      "reason": "Skipped after the agent filled its four-citation answer set (8 relevance, 4 freshness, 6 price-fit)."
+    },
+    {
+      "action": "skipped",
+      "score": 20,
+      "priceMicroUsdc": 100,
+      "title": "Allocation Update - Q1 2026",
+      "reason": "Skipped after the agent filled its four-citation answer set (8 relevance, 4 freshness, 6 price-fit)."
+    },
+    {
+      "action": "skipped",
+      "score": 20,
+      "priceMicroUsdc": 100,
+      "title": "Protocol Cluster Updates: May 2026",
+      "reason": "Skipped after the agent filled its four-citation answer set (8 relevance, 4 freshness, 6 price-fit)."
+    },
+    {
+      "action": "skipped",
+      "score": 20,
+      "priceMicroUsdc": 100,
+      "title": "Clear Signing: Making Transaction Approvals Safer on Ethereum",
+      "reason": "Skipped after the agent filled its four-citation answer set (8 relevance, 4 freshness, 6 price-fit)."
+    },
+    {
+      "action": "skipped",
+      "score": 16,
+      "priceMicroUsdc": 100,
+      "title": "Introducing the EF Academic Secretariat 2026 PhD Fellowship",
+      "reason": "Skipped after the agent filled its four-citation answer set (8 relevance, 0 freshness, 6 price-fit)."
+    },
+    {
+      "action": "skipped",
+      "score": 16,
+      "priceMicroUsdc": 100,
+      "title": "An update from Tomasz",
+      "reason": "Skipped after the agent filled its four-citation answer set (8 relevance, 0 freshness, 6 price-fit)."
+    },
+    {
+      "action": "skipped",
+      "score": 16,
+      "priceMicroUsdc": 100,
+      "title": "Executive Leadership Update",
+      "reason": "Skipped after the agent filled its four-citation answer set (8 relevance, 0 freshness, 6 price-fit)."
+    }
+  ]
+}

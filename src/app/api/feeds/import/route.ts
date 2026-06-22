@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getStore } from "@/lib/db";
 import { importRssFeed } from "@/lib/rss";
+import { requireAdmin } from "@/lib/security";
 
 const schema = z.object({
   publisherId: z.string().uuid(),
@@ -8,6 +9,9 @@ const schema = z.object({
 });
 
 export async function POST(request: Request) {
+  const adminError = requireAdmin(request);
+  if (adminError) return adminError;
+
   try {
     const parsed = schema.safeParse(await request.json());
     if (!parsed.success) {

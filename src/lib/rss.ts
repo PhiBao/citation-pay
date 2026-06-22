@@ -1,3 +1,4 @@
+import { lookup } from "node:dns/promises";
 import { XMLParser } from "fast-xml-parser";
 import { sha256 } from "@/lib/crypto";
 
@@ -38,8 +39,17 @@ export function assertPublicHttpUrl(rawUrl: string) {
   return url.toString();
 }
 
+export async function assertPubliclyResolvedUrl(rawUrl: string) {
+  const url = new URL(assertPublicHttpUrl(rawUrl));
+  const addresses = await lookup(url.hostname, { all: true });
+  if (addresses.some((entry) => isPrivateAddress(entry.address))) {
+    throw new Error("Feed URL must not resolve to a private or reserved address");
+  }
+  return url.toString();
+}
+
 export async function importRssFeed(rawUrl: string): Promise<ImportedFeed> {
-  const url = assertPublicHttpUrl(rawUrl);
+  const url = await assertPubliclyResolvedUrl(rawUrl);
   const response = await fetch(url, {
     headers: {
       accept: "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.8"
@@ -49,7 +59,14 @@ export async function importRssFeed(rawUrl: string): Promise<ImportedFeed> {
   if (!response.ok) {
     throw new Error(`Feed fetch failed with HTTP ${response.status}`);
   }
+  const contentLength = Number(response.headers.get("content-length") || "0");
+  if (contentLength > 1_000_000) {
+    throw new Error("Feed is too large");
+  }
   const xml = await response.text();
+  if (xml.length > 1_000_000) {
+    throw new Error("Feed is too large");
+  }
   const parsed = parser.parse(xml);
   const rssChannel = parsed.rss?.channel;
   const atomFeed = parsed.feed;
@@ -147,4 +164,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isImportedFeedItem(value: ImportedFeedItem | null): value is ImportedFeedItem {
   return value !== null;
+}
+
+function isPrivateAddress(address: string) {
+  if (address.includes(":")) {
+    const normalized = address.toLowerCase();
+    return (
+      normalized === "::1" ||
+      normalized.startsWith("fc") ||
+      normalized.startsWith("fd") ||
+      normalized.startsWith("fe80:") ||
+      normalized === "::"
+    );
+  }
+
+  const parts = address.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part))) return true;
+  const [a, b] = parts;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    a >= 224
+  );
 }

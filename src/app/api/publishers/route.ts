@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getStore } from "@/lib/db";
 import { parseUsdToMicroUsdc } from "@/lib/price";
+import { requireAdmin } from "@/lib/security";
 
 const schema = z.object({
   name: z.string().min(2).max(80),
@@ -14,6 +15,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const adminError = requireAdmin(request);
+  if (adminError) return adminError;
+
   const parsed = schema.safeParse(await request.json());
   if (!parsed.success) {
     return Response.json({ error: parsed.error.issues[0]?.message || "Invalid publisher" }, { status: 400 });

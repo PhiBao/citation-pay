@@ -4,10 +4,12 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { nowIso, sha256, uuid } from "@/lib/crypto";
 import { hasSupabaseEnv } from "@/lib/env";
 import type {
+  AgentDecisionRecord,
   AgentRun,
   CitationPayment,
   DashboardData,
   Feed,
+  PaidSourceCache,
   Publisher,
   Source,
   SourceWithPublisher
@@ -38,6 +40,8 @@ type NewSource = {
 };
 
 type NewPayment = Omit<CitationPayment, "id" | "created_at">;
+type NewDecision = Omit<AgentDecisionRecord, "id" | "created_at">;
+type NewCache = Omit<PaidSourceCache, "id" | "created_at" | "paid_at"> & { paid_at?: string };
 
 export interface Store {
   createPublisher(input: NewPublisher): Promise<Publisher>;
@@ -49,6 +53,9 @@ export interface Store {
   getSource(id: string): Promise<SourceWithPublisher | null>;
   createRun(query: string, budgetMicroUsdc: number): Promise<AgentRun>;
   finishRun(id: string, status: AgentRun["status"], answer: string, spentMicroUsdc: number): Promise<AgentRun>;
+  createDecision(input: NewDecision): Promise<AgentDecisionRecord>;
+  findCachedPaidSource(contentHash: string): Promise<PaidSourceCache | null>;
+  upsertPaidSourceCache(input: NewCache): Promise<PaidSourceCache>;
   createPayment(input: NewPayment): Promise<CitationPayment>;
   dashboard(): Promise<DashboardData>;
 }
@@ -183,15 +190,49 @@ class SupabaseStore implements Store {
     return data as CitationPayment;
   }
 
+  async createDecision(input: NewDecision) {
+    const { data, error } = await this.client.from("agent_decisions").insert(input).select("*").single();
+    if (error) throw new Error(error.message);
+    return data as AgentDecisionRecord;
+  }
+
+  async findCachedPaidSource(contentHash: string) {
+    const { data, error } = await this.client
+      .from("paid_source_cache")
+      .select("*")
+      .eq("content_hash", contentHash)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return (data || null) as PaidSourceCache | null;
+  }
+
+  async upsertPaidSourceCache(input: NewCache) {
+    const { data, error } = await this.client
+      .from("paid_source_cache")
+      .upsert(
+        {
+          ...input,
+          paid_at: input.paid_at || nowIso()
+        },
+        { onConflict: "content_hash" }
+      )
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    return data as PaidSourceCache;
+  }
+
   async dashboard() {
-    const [publishers, feeds, sources, runs, payments] = await Promise.all([
+    const [publishers, feeds, sources, runs, payments, decisions, cache] = await Promise.all([
       this.client.from("publishers").select("*").order("created_at", { ascending: false }),
       this.client.from("feeds").select("*").order("created_at", { ascending: false }),
       this.client.from("sources").select("*, publisher:publishers(id,name,wallet_address)").order("created_at", { ascending: false }).limit(80),
       this.client.from("agent_runs").select("*").order("created_at", { ascending: false }).limit(30),
-      this.client.from("citation_payments").select("*, source:sources(*, publisher:publishers(id,name,wallet_address)), run:agent_runs(*)").order("created_at", { ascending: false }).limit(80)
+      this.client.from("citation_payments").select("*, source:sources(*, publisher:publishers(id,name,wallet_address)), run:agent_runs(*)").order("created_at", { ascending: false }).limit(80),
+      this.client.from("agent_decisions").select("*, source:sources(*, publisher:publishers(id,name,wallet_address)), run:agent_runs(*)").order("created_at", { ascending: false }).limit(120),
+      this.client.from("paid_source_cache").select("*, source:sources(*, publisher:publishers(id,name,wallet_address))").order("paid_at", { ascending: false }).limit(80)
     ]);
-    for (const result of [publishers, feeds, sources, runs, payments]) {
+    for (const result of [publishers, feeds, sources, runs, payments, decisions, cache]) {
       if (result.error) throw new Error(result.error.message);
     }
     return {
@@ -199,7 +240,9 @@ class SupabaseStore implements Store {
       feeds: (feeds.data || []) as Feed[],
       sources: (sources.data || []) as SourceWithPublisher[],
       runs: (runs.data || []) as AgentRun[],
-      payments: (payments.data || []) as DashboardData["payments"]
+      payments: (payments.data || []) as DashboardData["payments"],
+      decisions: (decisions.data || []) as DashboardData["decisions"],
+      cache: (cache.data || []) as DashboardData["cache"]
     };
   }
 }
@@ -210,6 +253,8 @@ type LocalData = {
   sources: Source[];
   runs: AgentRun[];
   payments: CitationPayment[];
+  decisions: AgentDecisionRecord[];
+  cache: PaidSourceCache[];
 };
 
 const emptyData = (): LocalData => ({
@@ -217,7 +262,9 @@ const emptyData = (): LocalData => ({
   feeds: [] as Feed[],
   sources: [] as Source[],
   runs: [] as AgentRun[],
-  payments: [] as CitationPayment[]
+  payments: [] as CitationPayment[],
+  decisions: [] as AgentDecisionRecord[],
+  cache: [] as PaidSourceCache[]
 });
 
 class JsonFileStore implements Store {
@@ -341,6 +388,41 @@ class JsonFileStore implements Store {
     return payment;
   }
 
+  async createDecision(input: NewDecision) {
+    const data = await this.load();
+    const decision: AgentDecisionRecord = { id: uuid(), ...input, created_at: nowIso() };
+    data.decisions.unshift(decision);
+    await this.save(data);
+    return decision;
+  }
+
+  async findCachedPaidSource(contentHash: string) {
+    const data = await this.load();
+    return data.cache.find((item) => item.content_hash === contentHash) || null;
+  }
+
+  async upsertPaidSourceCache(input: NewCache) {
+    const data = await this.load();
+    const existing = data.cache.find((item) => item.content_hash === input.content_hash);
+    if (existing) {
+      Object.assign(existing, {
+        ...input,
+        paid_at: input.paid_at || nowIso()
+      });
+      await this.save(data);
+      return existing;
+    }
+    const cacheItem: PaidSourceCache = {
+      id: uuid(),
+      ...input,
+      paid_at: input.paid_at || nowIso(),
+      created_at: nowIso()
+    };
+    data.cache.unshift(cacheItem);
+    await this.save(data);
+    return cacheItem;
+  }
+
   async dashboard() {
     const data = await this.load();
     const sources = withPublishers(data, data.sources.slice(0, 80));
@@ -353,6 +435,15 @@ class JsonFileStore implements Store {
         ...payment,
         source: sources.find((source) => source.id === payment.source_id),
         run: data.runs.find((run) => run.id === payment.run_id)
+      })),
+      decisions: data.decisions.map((decision) => ({
+        ...decision,
+        source: sources.find((source) => source.id === decision.source_id),
+        run: data.runs.find((run) => run.id === decision.run_id)
+      })),
+      cache: data.cache.map((cacheItem) => ({
+        ...cacheItem,
+        source: sources.find((source) => source.id === cacheItem.source_id)
       }))
     };
   }
@@ -360,7 +451,16 @@ class JsonFileStore implements Store {
   private async load(): Promise<LocalData> {
     try {
       const raw = await readFile(this.filePath, "utf8");
-      return JSON.parse(raw) as LocalData;
+      const data = JSON.parse(raw) as Partial<LocalData>;
+      return {
+        publishers: data.publishers || [],
+        feeds: data.feeds || [],
+        sources: data.sources || [],
+        runs: data.runs || [],
+        payments: data.payments || [],
+        decisions: data.decisions || [],
+        cache: data.cache || []
+      };
     } catch {
       return emptyData();
     }
