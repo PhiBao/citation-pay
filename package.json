@@ -46,7 +46,9 @@
     "onlyBuiltDependencies": [
       "sharp",
       "unrs-resolver",
-      "esbuild"
+      "esbuild",
+      "bufferutil",
+      "utf-8-validate"
     ]
   },
   "optionalDependencies": {

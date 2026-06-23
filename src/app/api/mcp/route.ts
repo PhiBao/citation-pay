@@ -1,123 +1,94 @@
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { requireSession } from "@/lib/accounts";
-import { buildServerForSession } from "@/lib/mcp/server";
-import { getSession, setSession, deleteSession, cleanupExpiredSessions } from "@/lib/mcp/sessions";
+import { dispatchTool, toolSchemas } from "@/lib/mcp/dispatch";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
-
-const SESSION_HEADER = "mcp-session-id";
+export const maxDuration = 30;
 
 export async function POST(request: Request) {
-  validateOrigin(request);
-  cleanupExpiredSessions();
-
-  const sessionId = request.headers.get(SESSION_HEADER) || undefined;
-  const isInitRequest = await isInitialize(request);
-
-  if (isInitRequest) {
-    return handleInitialize(request);
-  }
-
-  if (sessionId) {
-    const session = getSession(sessionId);
-    if (session) {
-      return session.transport.handleRequest(request);
-    }
-    return new Response(
-      JSON.stringify({ jsonrpc: "2.0", error: { code: -32000, message: "Session not found or expired" } }),
-      { status: 404, headers: { "content-type": "application/json" } }
-    );
-  }
-
-  return new Response(
-    JSON.stringify({ jsonrpc: "2.0", error: { code: -32000, message: "Bad Request: no valid session. Send initialize first." } }),
-    { status: 400, headers: { "content-type": "application/json" } }
-  );
-}
-
-export async function GET(request: Request) {
-  validateOrigin(request);
-  const sessionId = request.headers.get(SESSION_HEADER) || undefined;
-  if (sessionId) {
-    const session = getSession(sessionId);
-    if (session) {
-      return session.transport.handleRequest(request);
-    }
-  }
-  return new Response("Session not found", { status: 404 });
-}
-
-export async function DELETE(request: Request) {
-  validateOrigin(request);
-  const sessionId = request.headers.get(SESSION_HEADER) || undefined;
-  if (sessionId) {
-    deleteSession(sessionId);
-    return new Response(null, { status: 200 });
-  }
-  return new Response(null, { status: 404 });
-}
-
-async function handleInitialize(request: Request): Promise<Response> {
-  let session;
-  try {
-    session = await requireSession(request);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Authentication required";
-    return new Response(
-      JSON.stringify({ jsonrpc: "2.0", error: { code: -32000, message } }),
-      { status: 401, headers: { "content-type": "application/json" } }
-    );
-  }
-
-  const newSessionId = crypto.randomUUID();
-  const server = await buildServerForSession(session);
-  const transport = new WebStandardStreamableHTTPServerTransport({
-    sessionIdGenerator: () => newSessionId,
-    enableJsonResponse: true
-  });
-
-  await server.connect(transport);
-
-  const response = await transport.handleRequest(request);
-
-  setSession(newSessionId, {
-    server,
-    transport,
-    accountId: session.account.id,
-    createdAt: Date.now(),
-    lastUsedAt: Date.now()
-  });
-
-  const headers = new Headers(response.headers);
-  headers.set(SESSION_HEADER, newSessionId);
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers
-  });
-}
-
-function validateOrigin(request: Request) {
   const origin = request.headers.get("origin");
   const host = request.headers.get("host");
   if (origin && host) {
     try {
       if (new URL(origin).host !== host) {
-        throw new Error("Origin validation failed");
+        return new Response("Origin validation failed", { status: 403 });
       }
     } catch {
-      throw new Error("Invalid origin");
+      return new Response("Invalid origin", { status: 400 });
     }
   }
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return rpcError(-32700, "Parse error");
+  }
+
+  if (body.jsonrpc !== "2.0") {
+    return rpcError(-32600, "Invalid Request");
+  }
+
+  const id = (body.id ?? null) as string | number | null;
+  const method = typeof body.method === "string" ? body.method : "";
+
+  if (method === "initialize") {
+    return rpcResult(id, {
+      protocolVersion: "2025-06-18",
+      capabilities: { tools: {} },
+      serverInfo: { name: "citationpay", version: "0.2.0" }
+    });
+  }
+
+  if (method === "notifications/initialized") {
+    return Response.json({ jsonrpc: "2.0", id, result: {} });
+  }
+
+  if (method === "tools/list") {
+    return rpcResult(id, { tools: toolSchemas });
+  }
+
+  if (method === "tools/call") {
+    const params = (body.params || {}) as { name?: string; arguments?: Record<string, unknown> };
+    const toolName = params.name;
+    if (!toolName) return rpcError(-32602, "Missing tool name", id);
+
+    let accountId: string;
+    try {
+      const session = await requireSession(request);
+      accountId = session.account.id;
+    } catch (err) {
+      return rpcError(-32000, err instanceof Error ? err.message : "Authentication required", id);
+    }
+
+    try {
+      const result = await dispatchTool(toolName, params.arguments || {}, accountId);
+      return rpcResult(id, result);
+    } catch (err) {
+      return rpcError(-32000, err instanceof Error ? err.message : "Tool execution failed", id);
+    }
+  }
+
+  return rpcError(-32601, `Method not found: ${method}`, id);
 }
 
-async function isInitialize(request: Request): Promise<boolean> {
-  try {
-    const cloned = request.clone();
-    const body = (await cloned.json()) as Record<string, unknown>;
-    return body.method === "initialize";
-  } catch {
-    return false;
-  }
+export async function GET() {
+  return new Response("POST JSON-RPC 2.0 to this endpoint.", { status: 405 });
+}
+
+export async function DELETE() {
+  return new Response(null, { status: 405 });
+}
+
+function rpcResult(id: string | number | null, result: unknown) {
+  return Response.json(
+    { jsonrpc: "2.0", id, result },
+    { headers: { "content-type": "application/json" } }
+  );
+}
+
+function rpcError(code: number, message: string, id: string | number | null = null) {
+  return Response.json(
+    { jsonrpc: "2.0", error: { code, message }, id },
+    { status: code === -32000 ? 500 : 400, headers: { "content-type": "application/json" } }
+  );
 }

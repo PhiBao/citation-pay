@@ -110,7 +110,6 @@ export default function McpPage() {
   const [response, setResponse] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [, setApiKey] = useState<string | null>(null);
 
   useEffect(() => {
     if (status === "anonymous") {
@@ -129,63 +128,22 @@ export default function McpPage() {
     if (status !== "authenticated" || !user?.account) return;
     void fetch("/api/account/api-keys", { cache: "no-store" })
       .then((r) => r.json())
-      .then((d) => {
-        const def = (d.keys || []).find((k: { name: string }) => k.name === "Default agent key");
-        setApiKey(def ? `${def.prefix}…` : null);
-      });
+      .then(() => {});
   }, [status, user]);
 
   const tool = useMemo(() => TOOLS.find((t) => t.name === selected), [selected]);
-
-  const [mcpSessionId, setMcpSessionId] = useState<string | null>(null);
-
-  async function ensureMcpSession(): Promise<string | null> {
-    if (mcpSessionId) {
-      return mcpSessionId;
-    }
-    const initRes = await fetch("/api/mcp", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream"
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: crypto.randomUUID(),
-        method: "initialize",
-        params: {
-          protocolVersion: "2025-06-18",
-          capabilities: {},
-          clientInfo: { name: "citationpay-web-tester", version: "1.0.0" }
-        }
-      })
-    });
-    const sid = initRes.headers.get("mcp-session-id");
-    if (sid) {
-      setMcpSessionId(sid);
-      return sid;
-    }
-    return null;
-  }
 
   async function runTool() {
     setRunning(true);
     setError(null);
     setResponse(null);
     try {
-      const sid = await ensureMcpSession();
-      if (!sid) {
-        setError("Failed to initialize MCP session. Make sure you are signed in.");
-        setRunning(false);
-        return;
-      }
       const args = argsText.trim() ? JSON.parse(argsText) : {};
       const res = await fetch("/api/mcp", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          "mcp-session-id": sid
+          accept: "application/json"
         },
         body: JSON.stringify({
           jsonrpc: "2.0",
@@ -209,9 +167,6 @@ export default function McpPage() {
         setResponse(text);
       }
       if (!res.ok) {
-        if (res.status === 404) {
-          setMcpSessionId(null);
-        }
         toast.push("error", `MCP responded with HTTP ${res.status}`);
       }
     } catch (err) {
@@ -242,25 +197,10 @@ export default function McpPage() {
     setError(null);
     setResponse(null);
     try {
-      const sid = await ensureMcpSession();
-      if (!sid) {
-        setError("Failed to initialize MCP session.");
-        setRunning(false);
-        return;
-      }
       const res = await fetch("/api/mcp", {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          "mcp-session-id": sid
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: crypto.randomUUID(),
-          method: "tools/list",
-          params: {}
-        })
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: crypto.randomUUID(), method: "tools/list", params: {} })
       });
       const text = await res.text();
       setResponse(text);
@@ -326,12 +266,6 @@ export default function McpPage() {
               ))}
             </div>
             {tool && <p className="text-xs text-zinc-500 mb-3">{tool.description}</p>}
-            <div className="mb-3 flex items-center gap-2 text-xs">
-              <span className={`inline-block h-1.5 w-1.5 rounded-full ${mcpSessionId ? "bg-emerald-400" : "bg-zinc-600"}`} />
-              <span className="text-zinc-500">
-                {mcpSessionId ? `session active (${mcpSessionId.slice(0, 8)}…)` : "no session — init will run on first call"}
-              </span>
-            </div>
             <Textarea
               label="arguments (JSON)"
               name="args"

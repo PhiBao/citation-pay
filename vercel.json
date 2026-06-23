@@ -1,0 +1,5 @@
+{
+  "installCommand": "pnpm install --frozen-lockfile --ignore-scripts",
+  "buildCommand": "pnpm rebuild sharp unrs-resolver && pnpm build",
+  "framework": "nextjs"
+}
