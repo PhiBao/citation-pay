@@ -35,7 +35,7 @@ The user does not connect a wallet. The product is agent-wallet-first: the serve
 - Supabase Postgres
 - Circle Gateway/x402 batching SDK
 - Arc Testnet
-- Optional OpenAI answer composition
+- Optional DGrid answer composition
 
 ## Key Paths
 
@@ -90,7 +90,9 @@ MAX_PUBLIC_BUDGET_MICRO_USDC=1000
 Optional:
 
 ```bash
-OPENAI_API_KEY=...
+DGRID_API_KEY=...
+DGRID_MODEL=openai/gpt-4o
+DGRID_BASE_URL=https://api.dgrid.ai/v1
 ```
 
 Important:
@@ -100,6 +102,7 @@ Important:
 - The buyer wallet must have Arc Testnet USDC deposited into Circle Gateway.
 - Publisher receiving wallets must differ from the agent wallet.
 - `ARC_RPC_URL`, `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`, and `CIRCLE_WALLET_ID` are tracked for Circle Wallet API operations, while the current x402 payment flow still uses `BUYER_PRIVATE_KEY`.
+- `DGRID_API_KEY` enables model-composed answers through DGrid's OpenAI-compatible gateway. Without it, the agent returns deterministic extractive answers from paid cards.
 - `ADMIN_TOKEN` protects publisher/feed setup in production through `x-admin-token`.
 - `MAX_PUBLIC_BUDGET_MICRO_USDC` caps public agent spend per run.
 
@@ -114,12 +117,6 @@ Open:
 
 ```text
 http://localhost:3000
-```
-
-If port `3000` is occupied:
-
-```bash
-NEXT_PUBLIC_APP_URL=http://localhost:3001 pnpm exec next dev -p 3001
 ```
 
 Use `PAYMENT_MODE=real` only when `NEXT_PUBLIC_APP_URL` points to a URL the Gateway callback can reach.

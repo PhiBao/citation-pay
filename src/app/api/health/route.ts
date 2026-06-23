@@ -1,4 +1,14 @@
-import { appUrl, arcRpcUrl, facilitatorUrl, hasCircleWalletApiEnv, hasSupabaseEnv, paymentMode } from "@/lib/env";
+import {
+  appUrl,
+  arcRpcUrl,
+  dgridBaseUrl,
+  dgridModel,
+  facilitatorUrl,
+  hasCircleWalletApiEnv,
+  hasDgridEnv,
+  hasSupabaseEnv,
+  paymentMode
+} from "@/lib/env";
 import { getStore } from "@/lib/db";
 
 export async function GET() {
@@ -14,6 +24,9 @@ export async function GET() {
     supabaseConfigured: hasSupabaseEnv(),
     circleWalletApiConfigured: hasCircleWalletApiEnv(),
     arcRpcConfigured: Boolean(arcRpcUrl()),
+    dgridConfigured: hasDgridEnv(),
+    dgridModel: dgridModel(),
+    dgridBaseUrl: dgridBaseUrl(),
     database,
     facilitator
   });

@@ -1,4 +1,3 @@
-import OpenAI from "openai";
 import { getStore } from "@/lib/db";
 import { payForSource } from "@/lib/payment";
 import { formatMicroUsdc } from "@/lib/price";
@@ -234,25 +233,14 @@ export async function composePaidAnswer(
     return `No paid citations were purchased. The agent found no relevant sources within the ${formatMicroUsdc(budgetMicroUsdc)} budget.`;
   }
 
-  if (process.env.OPENAI_API_KEY) {
-    const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const completion = await client.chat.completions.create({
-      model: "gpt-4.1-mini",
-      temperature: 0.2,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a concise research agent. Answer only from the paid source cards. Cite each source as [1], [2], etc. Mention the spend summary at the end."
-        },
-        {
-          role: "user",
-          content: JSON.stringify({ query, paidSources: cards })
-        }
-      ]
+  if (process.env.DGRID_API_KEY) {
+    const content = await composeWithDgrid(query, cards).catch((error) => {
+      console.error("DGrid answer composition failed", error);
+      return "";
     });
-    const content = completion.choices[0]?.message.content?.trim();
-    if (content) return `${content}\n\nSpent ${formatMicroUsdc(spentMicroUsdc)} of ${formatMicroUsdc(budgetMicroUsdc)}.`;
+    if (content) {
+      return `${content}\n\nSpent ${formatMicroUsdc(spentMicroUsdc)} of ${formatMicroUsdc(budgetMicroUsdc)}.`;
+    }
   }
 
   const bullets = cards
@@ -260,6 +248,65 @@ export async function composePaidAnswer(
     .join("\n\n");
   const citations = cards.map((card, index) => `[${index + 1}] ${card.canonicalUrl}`).join("\n");
   return `Question: ${query}\n\nPaid answer draft:\n${bullets}\n\nCitations:\n${citations}\n\nSpent ${formatMicroUsdc(spentMicroUsdc)} of ${formatMicroUsdc(budgetMicroUsdc)}.`;
+}
+
+type DgridChatResponse = {
+  choices?: Array<{
+    message?: {
+      content?: DgridContent;
+    };
+  }>;
+};
+
+type DgridContent = string | Array<{ type?: string; text?: string }> | undefined;
+
+async function composeWithDgrid(query: string, cards: PaidSourceCard[]) {
+  const response = await fetch(`${dgridBaseUrl()}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${process.env.DGRID_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: process.env.DGRID_MODEL || "openai/gpt-4o",
+      temperature: 0.2,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a concise research agent. Answer only from the paid source cards. Cite each source as [1], [2], etc. Do not mention spend, payment totals, budgets, or receipts; the server appends the verified payment summary."
+        },
+        {
+          role: "user",
+          content: JSON.stringify({ query, paidSources: cards })
+        }
+      ]
+    }),
+    signal: AbortSignal.timeout(20_000)
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`DGrid request failed with HTTP ${response.status}: ${body.slice(0, 240)}`);
+  }
+
+  const data = (await response.json()) as DgridChatResponse;
+  return normalizeDgridContent(data.choices?.[0]?.message?.content);
+}
+
+function normalizeDgridContent(content: DgridContent) {
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => part.text || "")
+      .join("")
+      .trim();
+  }
+  return "";
+}
+
+function dgridBaseUrl() {
+  return (process.env.DGRID_BASE_URL || "https://api.dgrid.ai/v1").replace(/\/$/, "");
 }
 
 function sourceToCard(source: SourceWithPublisher): PaidSourceCard {

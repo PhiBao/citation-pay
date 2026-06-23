@@ -14,6 +14,12 @@ export const arcRpcUrl = () => process.env.ARC_RPC_URL || "";
 export const hasCircleWalletApiEnv = () =>
   Boolean(process.env.CIRCLE_API_KEY && process.env.CIRCLE_ENTITY_SECRET && process.env.CIRCLE_WALLET_ID);
 
+export const dgridBaseUrl = () => (process.env.DGRID_BASE_URL || "https://api.dgrid.ai/v1").replace(/\/$/, "");
+
+export const dgridModel = () => process.env.DGRID_MODEL || "openai/gpt-4o";
+
+export const hasDgridEnv = () => Boolean(process.env.DGRID_API_KEY);
+
 export const hasSupabaseEnv = () =>
   Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 
