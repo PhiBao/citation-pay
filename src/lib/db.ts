@@ -14,14 +14,18 @@ import type {
   LedgerEntry,
   PaidSourceCache,
   Publisher,
+  PublisherClaim,
   Source,
-  SourceWithPublisher
+  SourceWithPublisher,
+  WalletEvent
 } from "@/lib/types";
 
 type NewPublisher = {
   name: string;
   wallet_address: string;
   default_price_micro_usdc: number;
+  supabase_user_id?: string | null;
+  verified?: boolean;
 };
 
 type NewFeed = {
@@ -48,6 +52,7 @@ type NewCache = Omit<PaidSourceCache, "id" | "created_at" | "paid_at"> & { paid_
 type NewAccount = Pick<Account, "name" | "email" | "balance_micro_usdc" | "trial_credit_micro_usdc" | "per_run_limit_micro_usdc" | "daily_limit_micro_usdc">;
 type NewApiKey = Pick<AccountApiKey, "account_id" | "name" | "key_prefix" | "key_hash">;
 type NewLedgerEntry = Omit<LedgerEntry, "id" | "created_at">;
+type NewWalletEvent = Omit<WalletEvent, "id" | "created_at">;
 type RunContext = { accountId?: string | null; apiKeyId?: string | null; clientType?: AgentRun["client_type"] };
 
 export interface Store {
@@ -55,22 +60,53 @@ export interface Store {
   listAccounts(): Promise<Account[]>;
   authenticateApiKey(keyHash: string): Promise<{ account: Account; apiKey: AccountApiKey } | null>;
   getAccount(id: string): Promise<Account | null>;
+  findAccountBySupabaseUser(supabaseUserId: string): Promise<Account | null>;
+  findAccountByEmail(email: string): Promise<Account | null>;
+  linkSupabaseUser(accountId: string, supabaseUserId: string): Promise<void>;
+  attachAccountWallet(accountId: string, walletId: string, walletAddress: string): Promise<void>;
+  createAccountApiKey(input: NewApiKey): Promise<AccountApiKey>;
+  findAccountApiKeyByName(accountId: string, name: string): Promise<AccountApiKey | null>;
+  listAccountApiKeys(accountId: string): Promise<AccountApiKey[]>;
+  revokeAccountApiKey(apiKeyId: string, accountId: string): Promise<void>;
   sumAccountDebitsSince(accountId: string, sinceIso: string): Promise<number>;
   debitAccount(accountId: string, runId: string, amountMicroUsdc: number, description: string): Promise<Account>;
+  creditAccount(accountId: string, amountMicroUsdc: number, description: string): Promise<Account>;
   createLedgerEntry(input: NewLedgerEntry): Promise<LedgerEntry>;
+  listLedger(accountId: string, limit?: number): Promise<LedgerEntry[]>;
   createPublisher(input: NewPublisher): Promise<Publisher>;
   listPublishers(): Promise<Publisher[]>;
+  getPublisher(id: string): Promise<Publisher | null>;
+  claimPublisher(publisherId: string, supabaseUserId: string, walletAddress: string, challenge: string, status: "pending" | "verified"): Promise<{ publisher: Publisher; challenge: string }>;
+  listPublishersBySupabaseUser(supabaseUserId: string): Promise<Publisher[]>;
   upsertFeed(input: NewFeed): Promise<Feed>;
   upsertSources(sources: NewSource[]): Promise<Source[]>;
+  replaceFeedSources(
+    feedId: string,
+    publisherId: string,
+    defaultPriceMicroUsdc: number,
+    items: Array<{
+      title: string;
+      canonicalUrl: string;
+      excerpt: string;
+      contentHash: string;
+      publishedAt: string | null;
+    }>
+  ): Promise<{ inserted: number; feed: Feed }>;
   listSources(): Promise<SourceWithPublisher[]>;
   searchSources(query: string, limit: number): Promise<SourceWithPublisher[]>;
   getSource(id: string): Promise<SourceWithPublisher | null>;
   createRun(query: string, budgetMicroUsdc: number, context?: RunContext): Promise<AgentRun>;
   finishRun(id: string, status: AgentRun["status"], answer: string, spentMicroUsdc: number): Promise<AgentRun>;
+  listRuns(accountId: string, limit?: number): Promise<Array<AgentRun & { source: SourceWithPublisher | null; payment: CitationPayment | null }>>;
   createDecision(input: NewDecision): Promise<AgentDecisionRecord>;
   findCachedPaidSource(contentHash: string): Promise<PaidSourceCache | null>;
   upsertPaidSourceCache(input: NewCache): Promise<PaidSourceCache>;
   createPayment(input: NewPayment): Promise<CitationPayment>;
+  listPaymentsForAccount(accountId: string, limit?: number): Promise<Array<CitationPayment & { source?: SourceWithPublisher; run?: AgentRun }>>;
+  listPaymentsForPublisher(publisherId: string, limit?: number): Promise<Array<CitationPayment & { source?: SourceWithPublisher; run?: AgentRun }>>;
+  recordWalletEvent(input: NewWalletEvent): Promise<WalletEvent>;
+  listWalletEventsForAccount(accountId: string, limit?: number): Promise<WalletEvent[]>;
+  listWalletEventsForPublisher(publisherId: string, limit?: number): Promise<WalletEvent[]>;
   dashboard(): Promise<DashboardData>;
 }
 
@@ -214,7 +250,14 @@ class SupabaseStore implements Store {
   async createPublisher(input: NewPublisher) {
     const { data, error } = await this.client
       .from("publishers")
-      .insert({ ...input, owner_token_hash: sha256(`${input.wallet_address}:${Date.now()}`) })
+      .insert({
+        name: input.name,
+        wallet_address: input.wallet_address,
+        default_price_micro_usdc: input.default_price_micro_usdc,
+        owner_token_hash: sha256(`${input.wallet_address}:${Date.now()}`),
+        supabase_user_id: input.supabase_user_id ?? null,
+        verified: input.verified ?? false
+      })
       .select("*")
       .single();
     if (error) throw new Error(error.message);
@@ -255,6 +298,51 @@ class SupabaseStore implements Store {
       .select("*");
     if (error) throw new Error(error.message);
     return (data || []) as Source[];
+  }
+
+  async replaceFeedSources(
+    feedId: string,
+    publisherId: string,
+    defaultPriceMicroUsdc: number,
+    items: Array<{
+      title: string;
+      canonicalUrl: string;
+      excerpt: string;
+      contentHash: string;
+      publishedAt: string | null;
+    }>
+  ) {
+    if (items.length > 0) {
+      const seenHashes = new Set<string>();
+      const rows: NewSource[] = [];
+      for (const item of items) {
+        if (seenHashes.has(item.contentHash)) continue;
+        seenHashes.add(item.contentHash);
+        rows.push({
+          publisher_id: publisherId,
+          feed_id: feedId,
+          title: item.title,
+          canonical_url: item.canonicalUrl,
+          excerpt: item.excerpt,
+          content_hash: item.contentHash,
+          price_micro_usdc: defaultPriceMicroUsdc,
+          published_at: item.publishedAt,
+          search_text: `${item.title} ${item.excerpt}`
+        });
+      }
+      const { error } = await this.client
+        .from("sources")
+        .upsert(rows, { onConflict: "content_hash", ignoreDuplicates: false });
+      if (error) throw new Error(error.message);
+    }
+    const { data, error } = await this.client
+      .from("feeds")
+      .update({ last_imported_at: nowIso() })
+      .eq("id", feedId)
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    return { inserted: items.length, feed: data as Feed };
   }
 
   async listSources() {
@@ -360,6 +448,237 @@ class SupabaseStore implements Store {
     return data as PaidSourceCache;
   }
 
+  async findAccountBySupabaseUser(supabaseUserId: string) {
+    const { data, error } = await this.client
+      .from("accounts")
+      .select("*")
+      .eq("supabase_user_id", supabaseUserId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return (data || null) as Account | null;
+  }
+
+  async findAccountByEmail(email: string) {
+    const { data, error } = await this.client
+      .from("accounts")
+      .select("*")
+      .eq("email", email.toLowerCase())
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return (data || null) as Account | null;
+  }
+
+  async linkSupabaseUser(accountId: string, supabaseUserId: string) {
+    const { error } = await this.client
+      .from("accounts")
+      .update({ supabase_user_id: supabaseUserId, onboarding_step: "ready", onboarding_completed_at: nowIso() })
+      .eq("id", accountId);
+    if (error) throw new Error(error.message);
+  }
+
+  async attachAccountWallet(accountId: string, walletId: string, walletAddress: string) {
+    const { error } = await this.client
+      .from("accounts")
+      .update({ circle_wallet_id: walletId, circle_wallet_address: walletAddress })
+      .eq("id", accountId);
+    if (error) throw new Error(error.message);
+  }
+
+  async createAccountApiKey(input: NewApiKey) {
+    const { data, error } = await this.client
+      .from("account_api_keys")
+      .insert(input)
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    return data as AccountApiKey;
+  }
+
+  async findAccountApiKeyByName(accountId: string, name: string) {
+    const { data, error } = await this.client
+      .from("account_api_keys")
+      .select("*")
+      .eq("account_id", accountId)
+      .eq("name", name)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return (data || null) as AccountApiKey | null;
+  }
+
+  async listAccountApiKeys(accountId: string) {
+    const { data, error } = await this.client
+      .from("account_api_keys")
+      .select("*")
+      .eq("account_id", accountId)
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(error.message);
+    return (data || []) as AccountApiKey[];
+  }
+
+  async revokeAccountApiKey(apiKeyId: string, accountId: string) {
+    const { error } = await this.client
+      .from("account_api_keys")
+      .delete()
+      .eq("id", apiKeyId)
+      .eq("account_id", accountId);
+    if (error) throw new Error(error.message);
+  }
+
+  async creditAccount(accountId: string, amountMicroUsdc: number, description: string) {
+    const { data: account, error: accError } = await this.client
+      .from("accounts")
+      .select("*")
+      .eq("id", accountId)
+      .single();
+    if (accError) throw new Error(accError.message);
+    const balance = account.balance_micro_usdc + amountMicroUsdc;
+    const { data, error } = await this.client
+      .from("accounts")
+      .update({ balance_micro_usdc: balance })
+      .eq("id", accountId)
+      .select("*")
+      .single();
+    if (error) throw new Error(error.message);
+    await this.createLedgerEntry({
+      account_id: accountId,
+      run_id: null,
+      kind: "credit",
+      amount_micro_usdc: amountMicroUsdc,
+      balance_after_micro_usdc: balance,
+      description
+    });
+    return data as Account;
+  }
+
+  async listLedger(accountId: string, limit = 50) {
+    const { data, error } = await this.client
+      .from("ledger_entries")
+      .select("*")
+      .eq("account_id", accountId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error) throw new Error(error.message);
+    return (data || []) as LedgerEntry[];
+  }
+
+  async listRuns(accountId: string, limit = 25) {
+    const { data, error } = await this.client
+      .from("agent_runs")
+      .select("*, source:sources(*, publisher:publishers(id,name,wallet_address)), payment:citation_payments(*)")
+      .eq("account_id", accountId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error) throw new Error(error.message);
+    return (data || []) as Array<AgentRun & { source: SourceWithPublisher | null; payment: CitationPayment | null }>;
+  }
+
+  async listPaymentsForAccount(accountId: string, limit = 50) {
+    const { data, error } = await this.client
+      .from("citation_payments")
+      .select("*, source:sources(*, publisher:publishers(id,name,wallet_address)), run:agent_runs(*)")
+      .eq("account_id", accountId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error) throw new Error(error.message);
+    return (data || []) as Array<CitationPayment & { source?: SourceWithPublisher; run?: AgentRun }>;
+  }
+
+  async listPaymentsForPublisher(publisherId: string, limit = 50) {
+    const { data, error } = await this.client
+      .from("citation_payments")
+      .select("*, source:sources(*, publisher:publishers(id,name,wallet_address)), run:agent_runs(*)")
+      .eq("source.publisher_id", publisherId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error) throw new Error(error.message);
+    return (data || []) as Array<CitationPayment & { source?: SourceWithPublisher; run?: AgentRun }>;
+  }
+
+  async getPublisher(id: string) {
+    const { data, error } = await this.client.from("publishers").select("*").eq("id", id).maybeSingle();
+    if (error) throw new Error(error.message);
+    return (data || null) as Publisher | null;
+  }
+
+  async listPublishersBySupabaseUser(supabaseUserId: string) {
+    const { data, error } = await this.client
+      .from("publishers")
+      .select("*")
+      .eq("supabase_user_id", supabaseUserId)
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(error.message);
+    return (data || []) as Publisher[];
+  }
+
+  async claimPublisher(
+    publisherId: string,
+    supabaseUserId: string,
+    walletAddress: string,
+    challenge: string,
+    status: "pending" | "verified"
+  ) {
+    const { data: existingPending, error: pendingError } = await this.client
+      .from("publisher_claims")
+      .select("*")
+      .eq("publisher_id", publisherId)
+      .eq("supabase_user_id", supabaseUserId)
+      .in("status", ["pending", "verified"])
+      .maybeSingle();
+    if (pendingError) throw new Error(pendingError.message);
+    if (existingPending) {
+      return {
+        publisher: (await this.getPublisher(publisherId))!,
+        challenge: (existingPending as PublisherClaim).verification_challenge
+      };
+    }
+    const { error: insertError } = await this.client.from("publisher_claims").insert({
+      publisher_id: publisherId,
+      supabase_user_id: supabaseUserId,
+      wallet_address: walletAddress,
+      verification_challenge: challenge,
+      status,
+      verified_at: status === "verified" ? nowIso() : null
+    });
+    if (insertError) throw new Error(insertError.message);
+    const { error: updateError } = await this.client
+      .from("publishers")
+      .update({ supabase_user_id: supabaseUserId, verified: status === "verified" })
+      .eq("id", publisherId);
+    if (updateError) throw new Error(updateError.message);
+    return {
+      publisher: (await this.getPublisher(publisherId))!,
+      challenge
+    };
+  }
+
+  async recordWalletEvent(input: NewWalletEvent) {
+    const { data, error } = await this.client.from("wallet_events").insert(input).select("*").single();
+    if (error) throw new Error(error.message);
+    return data as WalletEvent;
+  }
+
+  async listWalletEventsForAccount(accountId: string, limit = 25) {
+    const { data, error } = await this.client
+      .from("wallet_events")
+      .select("*")
+      .eq("account_id", accountId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error) throw new Error(error.message);
+    return (data || []) as WalletEvent[];
+  }
+
+  async listWalletEventsForPublisher(publisherId: string, limit = 25) {
+    const { data, error } = await this.client
+      .from("wallet_events")
+      .select("*")
+      .eq("publisher_id", publisherId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error) throw new Error(error.message);
+    return (data || []) as WalletEvent[];
+  }
+
   async dashboard() {
     const [accounts, publishers, feeds, sources, runs, payments, decisions, cache] = await Promise.all([
       this.client.from("accounts").select("*").order("created_at", { ascending: false }).limit(50),
@@ -398,6 +717,8 @@ type LocalData = {
   payments: CitationPayment[];
   decisions: AgentDecisionRecord[];
   cache: PaidSourceCache[];
+  claims: PublisherClaim[];
+  walletEvents: WalletEvent[];
 };
 
 const emptyData = (): LocalData => ({
@@ -410,7 +731,9 @@ const emptyData = (): LocalData => ({
   runs: [] as AgentRun[],
   payments: [] as CitationPayment[],
   decisions: [] as AgentDecisionRecord[],
-  cache: [] as PaidSourceCache[]
+  cache: [] as PaidSourceCache[],
+  claims: [] as PublisherClaim[],
+  walletEvents: [] as WalletEvent[]
 });
 
 class JsonFileStore implements Store {
@@ -423,6 +746,9 @@ class JsonFileStore implements Store {
       status: "active",
       circle_wallet_id: null,
       circle_wallet_address: null,
+      supabase_user_id: null,
+      onboarding_step: "ready",
+      onboarding_completed_at: nowIso(),
       created_at: nowIso(),
       ...input
     };
@@ -514,8 +840,12 @@ class JsonFileStore implements Store {
     const data = await this.load();
     const publisher: Publisher = {
       id: uuid(),
-      ...input,
+      name: input.name,
+      wallet_address: input.wallet_address,
+      default_price_micro_usdc: input.default_price_micro_usdc,
       owner_token_hash: sha256(`${input.wallet_address}:${Date.now()}`),
+      supabase_user_id: input.supabase_user_id ?? null,
+      verified: input.verified ?? false,
       created_at: nowIso()
     };
     data.publishers.unshift(publisher);
@@ -565,6 +895,53 @@ class JsonFileStore implements Store {
     }
     await this.save(data);
     return saved;
+  }
+
+  async replaceFeedSources(
+    feedId: string,
+    publisherId: string,
+    defaultPriceMicroUsdc: number,
+    items: Array<{
+      title: string;
+      canonicalUrl: string;
+      excerpt: string;
+      contentHash: string;
+      publishedAt: string | null;
+    }>
+  ) {
+    const data = await this.load();
+    const existingFeed = data.feeds.find((feed) => feed.id === feedId);
+    if (!existingFeed) throw new Error(`Feed ${feedId} not found`);
+    data.sources = data.sources.filter((source) => source.feed_id !== feedId);
+    const seenHashes = new Set<string>();
+    for (const item of items) {
+      if (seenHashes.has(item.contentHash)) continue;
+      seenHashes.add(item.contentHash);
+      const existing = data.sources.find((source) => source.content_hash === item.contentHash);
+      if (existing) {
+        existing.publisher_id = publisherId;
+        existing.feed_id = feedId;
+        existing.price_micro_usdc = defaultPriceMicroUsdc;
+        continue;
+      }
+      const source: Source = {
+        id: uuid(),
+        publisher_id: publisherId,
+        feed_id: feedId,
+        title: item.title,
+        canonical_url: item.canonicalUrl,
+        excerpt: item.excerpt,
+        content_hash: item.contentHash,
+        price_micro_usdc: defaultPriceMicroUsdc,
+        published_at: item.publishedAt,
+        search_text: `${item.title} ${item.excerpt}`,
+        created_at: nowIso()
+      };
+      data.sources.unshift(source);
+    }
+    existingFeed.last_imported_at = nowIso();
+    await this.save(data);
+    return { inserted: items.length, feed: existingFeed };
   }
 
   async listSources() {
@@ -666,6 +1043,202 @@ class JsonFileStore implements Store {
     return cacheItem;
   }
 
+  async findAccountBySupabaseUser(supabaseUserId: string) {
+    const data = await this.load();
+    return data.accounts.find((account) => account.supabase_user_id === supabaseUserId) ?? null;
+  }
+
+  async findAccountByEmail(email: string) {
+    const data = await this.load();
+    const target = email.toLowerCase();
+    return data.accounts.find((account) => account.email.toLowerCase() === target) ?? null;
+  }
+
+  async linkSupabaseUser(accountId: string, supabaseUserId: string) {
+    const data = await this.load();
+    const account = data.accounts.find((item) => item.id === accountId);
+    if (account) {
+      account.supabase_user_id = supabaseUserId;
+      account.onboarding_step = "ready";
+      account.onboarding_completed_at = nowIso();
+      await this.save(data);
+    }
+  }
+
+  async attachAccountWallet(accountId: string, walletId: string, walletAddress: string) {
+    const data = await this.load();
+    const account = data.accounts.find((item) => item.id === accountId);
+    if (account) {
+      account.circle_wallet_id = walletId;
+      account.circle_wallet_address = walletAddress;
+      await this.save(data);
+    }
+  }
+
+  async createAccountApiKey(input: NewApiKey) {
+    const data = await this.load();
+    const apiKey: AccountApiKey = {
+      id: uuid(),
+      ...input,
+      last_used_at: null,
+      created_at: nowIso()
+    };
+    data.apiKeys.unshift(apiKey);
+    await this.save(data);
+    return apiKey;
+  }
+
+  async findAccountApiKeyByName(accountId: string, name: string) {
+    const data = await this.load();
+    return data.apiKeys.find((item) => item.account_id === accountId && item.name === name) ?? null;
+  }
+
+  async listAccountApiKeys(accountId: string) {
+    const data = await this.load();
+    return data.apiKeys.filter((item) => item.account_id === accountId);
+  }
+
+  async revokeAccountApiKey(apiKeyId: string, accountId: string) {
+    const data = await this.load();
+    data.apiKeys = data.apiKeys.filter((item) => !(item.id === apiKeyId && item.account_id === accountId));
+    await this.save(data);
+  }
+
+  async creditAccount(accountId: string, amountMicroUsdc: number, description: string) {
+    const data = await this.load();
+    const account = data.accounts.find((item) => item.id === accountId);
+    if (!account) throw new Error(`Account ${accountId} not found`);
+    account.balance_micro_usdc += amountMicroUsdc;
+    data.ledger.unshift({
+      id: uuid(),
+      account_id: accountId,
+      run_id: null,
+      kind: "credit",
+      amount_micro_usdc: amountMicroUsdc,
+      balance_after_micro_usdc: account.balance_micro_usdc,
+      description,
+      created_at: nowIso()
+    });
+    await this.save(data);
+    return account;
+  }
+
+  async listLedger(accountId: string, limit = 50) {
+    const data = await this.load();
+    return data.ledger.filter((entry) => entry.account_id === accountId).slice(0, limit);
+  }
+
+  async listRuns(accountId: string, limit = 25) {
+    const data = await this.load();
+    const runs = data.runs
+      .filter((run) => run.account_id === accountId)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, limit);
+    return runs.map((run) => {
+      const payment = data.payments.find((p) => p.run_id === run.id) ?? null;
+      const source = payment
+        ? withPublishers(
+            data,
+            data.sources.filter((s) => s.id === payment.source_id)
+          )[0] ?? null
+        : null;
+      return { ...run, source, payment };
+    });
+  }
+
+  async listPaymentsForAccount(accountId: string, limit = 50) {
+    const data = await this.load();
+    const payments = data.payments
+      .filter((payment) => payment.account_id === accountId)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, limit);
+    return payments.map((payment) => ({
+      ...payment,
+      source: withPublishers(data, data.sources.filter((source) => source.id === payment.source_id))[0],
+      run: data.runs.find((run) => run.id === payment.run_id)
+    }));
+  }
+
+  async listPaymentsForPublisher(publisherId: string, limit = 50) {
+    const data = await this.load();
+    const sourceIds = new Set(data.sources.filter((source) => source.publisher_id === publisherId).map((s) => s.id));
+    const payments = data.payments
+      .filter((payment) => sourceIds.has(payment.source_id))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, limit);
+    return payments.map((payment) => ({
+      ...payment,
+      source: withPublishers(data, data.sources.filter((source) => source.id === payment.source_id))[0],
+      run: data.runs.find((run) => run.id === payment.run_id)
+    }));
+  }
+
+  async getPublisher(id: string) {
+    const data = await this.load();
+    return data.publishers.find((publisher) => publisher.id === id) ?? null;
+  }
+
+  async listPublishersBySupabaseUser(supabaseUserId: string) {
+    const data = await this.load();
+    return data.publishers.filter((publisher) => publisher.supabase_user_id === supabaseUserId);
+  }
+
+  async claimPublisher(
+    publisherId: string,
+    supabaseUserId: string,
+    walletAddress: string,
+    challenge: string,
+    status: "pending" | "verified"
+  ) {
+    const data = await this.load();
+    const existing = data.claims.find(
+      (claim) => claim.publisher_id === publisherId && claim.supabase_user_id === supabaseUserId && (claim.status === "pending" || claim.status === "verified")
+    );
+    if (existing) {
+      const publisher = data.publishers.find((p) => p.id === publisherId);
+      if (!publisher) throw new Error(`Publisher ${publisherId} not found`);
+      return { publisher, challenge: existing.verification_challenge };
+    }
+    data.claims.unshift({
+      id: uuid(),
+      publisher_id: publisherId,
+      supabase_user_id: supabaseUserId,
+      wallet_address: walletAddress,
+      verification_challenge: challenge,
+      status,
+      created_at: nowIso(),
+      verified_at: status === "verified" ? nowIso() : null
+    });
+    const publisher = data.publishers.find((p) => p.id === publisherId);
+    if (!publisher) throw new Error(`Publisher ${publisherId} not found`);
+    publisher.supabase_user_id = supabaseUserId;
+    publisher.verified = status === "verified";
+    await this.save(data);
+    return { publisher, challenge };
+  }
+
+  async recordWalletEvent(input: NewWalletEvent) {
+    const data = await this.load();
+    const event: WalletEvent = {
+      id: uuid(),
+      ...input,
+      created_at: nowIso()
+    };
+    data.walletEvents.unshift(event);
+    await this.save(data);
+    return event;
+  }
+
+  async listWalletEventsForAccount(accountId: string, limit = 25) {
+    const data = await this.load();
+    return data.walletEvents.filter((event) => event.account_id === accountId).slice(0, limit);
+  }
+
+  async listWalletEventsForPublisher(publisherId: string, limit = 25) {
+    const data = await this.load();
+    return data.walletEvents.filter((event) => event.publisher_id === publisherId).slice(0, limit);
+  }
+
   async dashboard() {
     const data = await this.load();
     const sources = withPublishers(data, data.sources.slice(0, 80));
@@ -706,7 +1279,9 @@ class JsonFileStore implements Store {
         runs: data.runs || [],
         payments: data.payments || [],
         decisions: data.decisions || [],
-        cache: data.cache || []
+        cache: data.cache || [],
+        claims: data.claims || [],
+        walletEvents: data.walletEvents || []
       };
     } catch {
       return emptyData();

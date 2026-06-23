@@ -4,7 +4,36 @@ export type Publisher = {
   wallet_address: string;
   default_price_micro_usdc: number;
   owner_token_hash: string;
+  supabase_user_id: string | null;
+  verified: boolean;
   created_at: string;
+};
+
+export type PublisherClaim = {
+  id: string;
+  publisher_id: string;
+  supabase_user_id: string;
+  wallet_address: string;
+  verification_challenge: string;
+  status: "pending" | "verified" | "rejected";
+  created_at: string;
+  verified_at: string | null;
+};
+
+export type WalletEvent = {
+  id: string;
+  account_id: string | null;
+  publisher_id: string | null;
+  kind: "deposit" | "sweep" | "withdrawal" | "faucet" | "settlement";
+  amount_micro_usdc: number;
+  tx_hash: string | null;
+  network: string;
+  from_address: string | null;
+  to_address: string | null;
+  status: "pending" | "confirmed" | "failed";
+  metadata: Record<string, unknown>;
+  created_at: string;
+  confirmed_at: string | null;
 };
 
 export type Feed = {
@@ -69,6 +98,9 @@ export type Account = {
   daily_limit_micro_usdc: number;
   circle_wallet_id: string | null;
   circle_wallet_address: string | null;
+  supabase_user_id: string | null;
+  onboarding_step: string;
+  onboarding_completed_at: string | null;
   created_at: string;
 };
 

@@ -6,7 +6,36 @@ create table if not exists publishers (
   wallet_address text not null,
   default_price_micro_usdc integer not null check (default_price_micro_usdc > 0),
   owner_token_hash text not null,
+  supabase_user_id uuid,
+  verified boolean not null default false,
   created_at timestamptz not null default now()
+);
+
+create table if not exists publisher_claims (
+  id uuid primary key default gen_random_uuid(),
+  publisher_id uuid not null references publishers(id) on delete cascade,
+  supabase_user_id uuid not null,
+  wallet_address text not null,
+  verification_challenge text not null,
+  status text not null default 'pending' check (status in ('pending', 'verified', 'rejected')),
+  created_at timestamptz not null default now(),
+  verified_at timestamptz
+);
+
+create table if not exists wallet_events (
+  id uuid primary key default gen_random_uuid(),
+  account_id uuid references accounts(id) on delete set null,
+  publisher_id uuid references publishers(id) on delete set null,
+  kind text not null check (kind in ('deposit', 'sweep', 'withdrawal', 'faucet', 'settlement')),
+  amount_micro_usdc bigint not null check (amount_micro_usdc >= 0),
+  tx_hash text,
+  network text not null,
+  from_address text,
+  to_address text,
+  status text not null default 'pending' check (status in ('pending', 'confirmed', 'failed')),
+  metadata jsonb default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  confirmed_at timestamptz
 );
 
 create table if not exists feeds (
@@ -46,6 +75,9 @@ create table if not exists accounts (
   daily_limit_micro_usdc integer not null default 10000 check (daily_limit_micro_usdc > 0),
   circle_wallet_id text,
   circle_wallet_address text,
+  supabase_user_id uuid unique,
+  onboarding_step text not null default 'ready',
+  onboarding_completed_at timestamptz,
   created_at timestamptz not null default now()
 );
 

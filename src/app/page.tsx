@@ -1,358 +1,413 @@
 "use client";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { motion } from "motion/react";
+import {
+  ArrowsClockwise,
+  CheckCircle,
+  Coins,
+  Lightning,
+  Quotes,
+  Robot,
+  ShieldCheck,
+  Sparkle,
+  Stack,
+  Storefront,
+  Wallet
+} from "@phosphor-icons/react/dist/ssr";
+import { Button } from "@/components/ui/button";
+import { useSession } from "@/components/session-provider";
+import { formatMicroUsdc, shortAddress } from "@/lib/price";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { DashboardData } from "@/lib/types";
-import { formatMicroUsdc } from "@/lib/price";
-
-type DashboardResponse = DashboardData & {
-  paymentMode: "real" | "mock";
-  health?: { database: "ok" | "down"; error: string | null };
-};
-
-type AccountView = {
-  id: string;
-  name: string;
-  email: string;
-  balanceMicroUsdc: number;
-  perRunLimitMicroUsdc: number;
-  dailyLimitMicroUsdc: number;
-};
-
-type AgentResponse = {
-  runId: string;
-  answer: string;
-  spentMicroUsdc: number;
-  cacheEvents: number;
-  account?: { id: string; balanceMicroUsdc: number };
-  ledger: Array<{
-    sourceId: string;
-    title: string;
-    publisher: string;
-    action: "paid" | "cached" | "skipped";
-    score: number;
-    price: string;
-    reason: string;
+type DashboardData = {
+  accounts: Array<{ id: string; created_at: string }>;
+  publishers: Array<{ id: string; name: string; wallet_address: string; default_price_micro_usdc: number }>;
+  feeds: Array<{ id: string; status: string }>;
+  sources: Array<{ id: string; price_micro_usdc: number; publisher: { name: string } }>;
+  runs: Array<{ id: string; created_at: string; query: string; spent_micro_usdc: number; status: string; client_type: string }>;
+  payments: Array<{
+    id: string;
+    amount_micro_usdc: number;
+    status: string;
+    created_at: string;
+    source?: { title: string; publisher: { name: string } };
   }>;
+  decisions: unknown[];
+  cache: unknown[];
+  health: { database: string; error: string | null };
+  paymentMode: string;
 };
 
-const emptyDashboard: DashboardResponse = {
-  accounts: [],
-  publishers: [],
-  feeds: [],
-  sources: [],
-  runs: [],
-  payments: [],
-  decisions: [],
-  cache: [],
-  paymentMode: "mock",
-  health: { database: "ok", error: null }
-};
-
-export default function Home() {
-  const [dashboard, setDashboard] = useState<DashboardResponse>(emptyDashboard);
-  const [status, setStatus] = useState("Ready");
-  const [loading, setLoading] = useState(false);
-  const [apiKey, setApiKey] = useState("");
-  const [account, setAccount] = useState<AccountView | null>(null);
-  const [agentResult, setAgentResult] = useState<AgentResponse | null>(null);
-
-  async function refresh() {
-    const response = await fetch("/api/dashboard", { cache: "no-store" });
-    const data = (await response.json()) as DashboardResponse;
-    setDashboard(data);
-  }
+export default function LandingPage() {
+  const { status } = useSession();
+  const [data, setData] = useState<DashboardData | null>(null);
 
   useEffect(() => {
-    const savedKey = window.localStorage.getItem("citationpay_api_key") || "";
-    setApiKey(savedKey);
-    refresh().catch((error) => setStatus(errorMessage(error)));
-    if (savedKey) {
-      fetch("/api/account", {
-        headers: { Authorization: `Bearer ${savedKey}` }
-      })
-        .then((response) => expectOk<{ account: AccountView }>(response))
-        .then((data) => setAccount(data.account))
-        .catch(() => window.localStorage.removeItem("citationpay_api_key"));
-    }
+    void fetch("/api/dashboard")
+      .then((r) => r.json())
+      .then((d) => setData(d))
+      .catch(() => setData(null));
   }, []);
 
-  const totalPaid = useMemo(
-    () => dashboard.payments.reduce((sum, payment) => sum + payment.amount_micro_usdc, 0),
-    [dashboard.payments]
-  );
-
-  async function signup(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoading(true);
-    const form = new FormData(event.currentTarget);
-    try {
-      const response = await fetch("/api/accounts/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: form.get("name"),
-          email: form.get("email")
-        })
-      });
-      const data = await expectOk<{ account: AccountView; apiKey: { key: string } }>(response);
-      setApiKey(data.apiKey.key);
-      setAccount(data.account);
-      window.localStorage.setItem("citationpay_api_key", data.apiKey.key);
-      setStatus("Account ready. Your API key is saved in this browser.");
-      await refresh();
-    } catch (error) {
-      setStatus(errorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function runAgent(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLoading(true);
-    setAgentResult(null);
-    const form = new FormData(event.currentTarget);
-    try {
-      if (!apiKey) throw new Error("Create an account first");
-      const response = await fetch("/api/agent/answer", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          query: form.get("query"),
-          budgetUsd: form.get("budgetUsd")
-        })
-      });
-      const data = await expectOk<AgentResponse>(response);
-      setAgentResult(data);
-      if (data.account && account) {
-        setAccount({ ...account, balanceMicroUsdc: data.account.balanceMicroUsdc });
+  const totals = data
+    ? {
+        publishers: data.publishers.length,
+        sources: data.sources.length,
+        paidCitations: data.payments.length,
+        volume: data.payments.reduce((s, p) => s + p.amount_micro_usdc, 0),
+        runs: data.runs.length
       }
-      setStatus(`Run complete. Spent ${formatMicroUsdc(data.spentMicroUsdc)}.`);
-      await refresh();
-    } catch (error) {
-      setStatus(errorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  }
+    : null;
 
   return (
-    <main className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
-      <section className="border-b border-[var(--line)] bg-[var(--surface)] px-4 py-6 md:px-8">
-        <div className="mx-auto grid max-w-7xl gap-5 lg:grid-cols-[1.15fr_0.85fr] lg:items-end">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[var(--accent)]">Paid citation accounts for agents</p>
-            <h1 className="mt-2 text-4xl font-black leading-none md:text-6xl">CitationPay</h1>
-            <p className="mt-3 max-w-3xl text-base leading-7 text-[var(--muted)]">
-              Create an account, get trial USDC credit, and let your agent buy publisher citations through x402. No private keys in the browser, no anonymous platform spending.
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <Metric label="mode" value={dashboard.paymentMode} tone={dashboard.paymentMode === "real" ? "good" : "warn"} />
-            <Metric label="accounts" value={String(dashboard.accounts.length)} />
-            <Metric label="sources" value={String(dashboard.sources.length)} />
-            <Metric label="paid" value={formatMicroUsdc(totalPaid)} />
-          </div>
-        </div>
-      </section>
-
-      <section className="mx-auto grid max-w-7xl gap-5 px-4 py-5 md:px-8 xl:grid-cols-[0.9fr_1.1fr]">
-        <aside className="space-y-5">
-          <Panel title="1. Create Account" kicker="Self serve">
-            {account ? (
-              <div className="grid gap-3">
-                <ProofRow label="Account" value={account.email} />
-                <ProofRow label="Balance" value={formatMicroUsdc(account.balanceMicroUsdc)} tone={account.balanceMicroUsdc > 0 ? "good" : "warn"} />
-                <ProofRow label="Per-run limit" value={formatMicroUsdc(account.perRunLimitMicroUsdc)} />
-              </div>
-            ) : (
-              <form className="grid gap-3" onSubmit={signup}>
-                <Input name="name" label="Name" placeholder="Kiter" required />
-                <Input name="email" type="email" label="Email" placeholder="you@example.com" required />
-                <button className="rounded-md bg-[var(--ink)] px-4 py-3 font-bold text-white disabled:opacity-50" disabled={loading}>
-                  Create account and API key
-                </button>
-              </form>
-            )}
-          </Panel>
-
-          <Panel title="2. Connect Agent" kicker="MCP/API">
-            <div className="grid gap-3 text-sm">
-              <CodeBlock value={`POST ${typeof window === "undefined" ? "" : window.location.origin}/api/mcp`} />
-              <CodeBlock value={`Authorization: Bearer ${apiKey || "cp_live_..."}`} />
-              <p className="text-[var(--muted)]">
-                Tools: search sources, preview citation, buy citations, answer with paid citations, get receipts.
-              </p>
-            </div>
-          </Panel>
-
-          <Panel title="Live Proof" kicker="Receipts">
-            <div className="grid gap-3">
-              <ProofRow label="Database" value={dashboard.health?.database === "down" ? "degraded" : "reachable"} tone={dashboard.health?.database === "down" ? "warn" : "good"} />
-              <ProofRow label="Publisher sources" value={String(dashboard.sources.length)} />
-              <ProofRow label="Settled payments" value={String(dashboard.payments.length)} />
-              <ProofRow label="Source cache" value={`${dashboard.cache.length} cards`} />
-            </div>
-          </Panel>
-        </aside>
-
-        <div className="space-y-5">
-          <Panel title="3. Run Paid Answer" kicker="User balance">
-            <form className="grid gap-3" onSubmit={runAgent}>
-              <label className="block text-sm font-bold text-[var(--muted)]">
-                Research request
-                <textarea
-                  name="query"
-                  className="mt-1 min-h-36 w-full resize-y rounded-md border border-[var(--line)] bg-white px-3 py-3 text-[var(--foreground)]"
-                  defaultValue="What is changing in agent payments, nanopayments, and publisher monetization?"
-                  required
-                />
-              </label>
-              <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
-                <Input name="budgetUsd" label="Max spend in USDC" defaultValue="0.001" required />
-                <button className="self-end rounded-md bg-[var(--accent)] px-5 py-3 font-bold text-white disabled:opacity-50" disabled={loading || !apiKey || dashboard.sources.length === 0}>
-                  {loading ? "Running..." : "Buy citations and answer"}
-                </button>
-              </div>
-            </form>
-
-            {agentResult ? (
-              <div className="mt-5 grid gap-4">
-                <div className="rounded-md border border-[var(--line)] bg-[#fffdf7] p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="font-black">Paid Answer</h3>
-                    <span className="text-sm font-bold text-[var(--accent)]">
-                      {formatMicroUsdc(agentResult.spentMicroUsdc)} spent · {agentResult.cacheEvents} cache hits
-                    </span>
-                  </div>
-                  <pre className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[var(--ink)]">{agentResult.answer}</pre>
-                </div>
-                <DecisionLedger rows={agentResult.ledger} />
-              </div>
-            ) : (
-              <Empty text={apiKey ? "Run the agent to buy or reuse paid citations." : "Create an account first. Paid runs require an account balance and API key."} />
-            )}
-          </Panel>
-
-          <Panel title="Source Market" kicker="Priced feeds">
-            <div className="grid gap-3">
-              {dashboard.sources.slice(0, 8).map((source) => (
-                <div key={source.id} className="rounded-md border border-[var(--line)] bg-white p-3">
-                  <div className="text-sm font-black">{source.title}</div>
-                  <div className="mt-1 text-xs text-[var(--muted)]">
-                    {source.publisher.name} · {formatMicroUsdc(source.price_micro_usdc)}
-                  </div>
-                </div>
-              ))}
-              {dashboard.sources.length === 0 && <Empty text="No priced sources are imported yet." />}
-            </div>
-          </Panel>
-        </div>
-      </section>
-
-      <div className="fixed bottom-4 left-1/2 z-10 w-[calc(100%-2rem)] max-w-3xl -translate-x-1/2 rounded-md border border-[var(--line)] bg-white px-4 py-3 text-sm shadow-lg">
-        <span className="font-bold">Status:</span> {loading ? "Working..." : status}
-      </div>
-    </main>
+    <div>
+      <Hero signedIn={status === "authenticated"} />
+      <LiveProof totals={totals} mode={data?.paymentMode} />
+      <HowItWorks />
+      <StackSection />
+      <PublisherCallout />
+      <DeveloperCallout signedIn={status === "authenticated"} />
+    </div>
   );
 }
 
-function Panel({ title, kicker, children }: { title: string; kicker: string; children: React.ReactNode }) {
+function Hero({ signedIn }: { signedIn: boolean }) {
   return (
-    <section className="rounded-md border border-[var(--line)] bg-[var(--panel)] p-4 shadow-sm">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="text-xl font-black">{title}</h2>
-        <span className="rounded-full border border-[var(--line)] px-3 py-1 text-xs font-bold uppercase tracking-[0.15em] text-[var(--accent)]">
-          {kicker}
-        </span>
+    <section className="relative">
+      <div className="mx-auto max-w-[1200px] px-5 pt-20 md:pt-28 pb-16">
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, ease: "easeOut" }}
+          className="max-w-3xl"
+        >
+          <div className="flex items-center gap-2 text-xs text-zinc-500 mb-6">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span>Live on Arc Testnet · USDC settlement</span>
+          </div>
+          <h1 className="text-4xl md:text-6xl font-semibold tracking-[-0.025em] leading-[1.05]">
+            Citation is a <em className="not-italic text-emerald-300">payable event</em>.
+          </h1>
+          <p className="mt-5 max-w-xl text-base md:text-lg text-zinc-400 leading-relaxed">
+            CitationPay gives AI agents a paid-citation account. They search, score, and pay per citation via x402
+            nanopayments on Arc. Publishers earn USDC the moment their work grounds an answer.
+          </p>
+          <div className="mt-8 flex flex-wrap items-center gap-3">
+            {signedIn ? (
+              <Link href="/app/playground">
+                <Button>
+                  <Sparkle size={15} weight="fill" /> Open the playground
+                </Button>
+              </Link>
+            ) : (
+              <Link href="/login?mode=signup">
+                <Button>
+                  <ArrowsClockwise size={15} weight="bold" /> Create your account
+                </Button>
+              </Link>
+            )}
+            <Link href="/publish">
+              <Button variant="ghost">
+                <Storefront size={15} weight="regular" /> For publishers
+              </Button>
+            </Link>
+            <Link
+              href="/app/mcp"
+              className="text-xs text-zinc-500 hover:text-emerald-300 underline-offset-4 hover:underline"
+            >
+              Or connect any MCP client →
+            </Link>
+          </div>
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.8, delay: 0.1, ease: "easeOut" }}
+          className="mt-14 panel p-1 overflow-hidden"
+        >
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-px bg-zinc-900 rounded-[10px] overflow-hidden text-sm">
+            <Step
+              n="01"
+              title="Agent searches"
+              body="Heuristic + LLM cost/benefit ranking of priced publisher sources."
+              icon={<Robot size={18} weight="duotone" />}
+            />
+            <Step
+              n="02"
+              title="Pays per citation"
+              body="x402 nanopayments on Arc. Gasless. Sub-cent. Settled in under a second."
+              icon={<Lightning size={18} weight="duotone" />}
+            />
+            <Step
+              n="03"
+              title="Publisher earns"
+              body="Real USDC in the publisher's Circle wallet. Withdrawable to any chain."
+              icon={<Wallet size={18} weight="duotone" />}
+            />
+          </div>
+        </motion.div>
       </div>
-      {children}
     </section>
   );
 }
 
-function DecisionLedger({ rows }: { rows: AgentResponse["ledger"] }) {
+function Step({
+  n,
+  title,
+  body,
+  icon
+}: {
+  n: string;
+  title: string;
+  body: string;
+  icon: React.ReactNode;
+}) {
   return (
-    <div className="rounded-md border border-[var(--line)] bg-white">
-      <div className="border-b border-[var(--line)] px-3 py-2 font-black">Agent Decision Ledger</div>
-      <div className="divide-y divide-[var(--line)]">
-        {rows.map((row) => (
-          <div key={`${row.sourceId}-${row.action}`} className="grid gap-2 px-3 py-3 text-sm md:grid-cols-[90px_1fr_70px]">
-            <span className={`w-fit rounded-full px-2 py-1 text-xs font-black uppercase ${actionClass(row.action)}`}>{row.action}</span>
-            <div>
-              <div className="font-bold">{row.title}</div>
-              <div className="mt-1 text-xs text-[var(--muted)]">{row.publisher} · {row.price} · {row.reason}</div>
-            </div>
-            <div className="text-right font-black">{row.score}</div>
-          </div>
-        ))}
+    <div className="bg-zinc-950 p-6">
+      <div className="flex items-center gap-2 text-xs text-zinc-500 amount tracking-wider">
+        <span className="text-emerald-400">{n}</span>
+        <span>·</span>
+        <span className="text-zinc-600">STEP</span>
       </div>
+      <div className="mt-3 flex items-center gap-2 text-base font-semibold tracking-tight">
+        <span className="text-emerald-300">{icon}</span>
+        {title}
+      </div>
+      <p className="mt-2 text-zinc-400 leading-relaxed">{body}</p>
     </div>
   );
 }
 
-function Metric({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "good" | "warn" }) {
+function LiveProof({ totals, mode }: { totals: { publishers: number; sources: number; paidCitations: number; volume: number; runs: number } | null; mode: string | undefined }) {
   return (
-    <div className={`rounded-md border px-3 py-3 text-center ${toneClass(tone)}`}>
-      <div className="break-words text-lg font-black">{value}</div>
-      <div className="text-xs font-bold uppercase tracking-[0.14em] opacity-75">{label}</div>
+    <section className="border-t border-zinc-900">
+      <div className="mx-auto max-w-[1200px] px-5 py-14">
+        <div className="flex items-baseline justify-between mb-6">
+          <h2 className="text-2xl font-semibold tracking-tight">Live proof on Arc Testnet</h2>
+          <span className="text-xs text-zinc-500 amount">{mode === "real" ? "real · testnet USDC" : mode ? "mock mode" : "loading…"}</span>
+        </div>
+        {totals ? (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-px bg-zinc-900 panel overflow-hidden">
+            <Stat label="Publishers" value={totals.publishers.toString()} />
+            <Stat label="Priced sources" value={totals.sources.toString()} />
+            <Stat label="Paid citations" value={totals.paidCitations.toString()} />
+            <Stat label="Volume" value={formatMicroUsdc(totals.volume)} accent />
+            <Stat label="Agent runs" value={totals.runs.toString()} />
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="panel p-5 h-[90px] animate-pulse bg-zinc-900/50" />
+            ))}
+          </div>
+        )}
+        <p className="mt-3 text-xs text-zinc-500">
+          Numbers above come from <code className="amount text-zinc-400">/api/dashboard</code> and update whenever the seeded
+          feeds are re-imported or a paid run is executed.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="bg-zinc-950 p-5">
+      <div className="text-[11px] uppercase tracking-wider text-zinc-500">{label}</div>
+      <div className={`mt-2 amount text-2xl ${accent ? "text-emerald-300" : "text-zinc-100"}`}>{value}</div>
     </div>
   );
 }
 
-function ProofRow({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "good" | "warn" }) {
+function HowItWorks() {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-md border border-[var(--line)] bg-white p-3 text-sm">
-      <span className="font-bold text-[var(--muted)]">{label}</span>
-      <span className={`break-all text-right font-black ${tone === "good" ? "text-[#0d6b47]" : tone === "warn" ? "text-[#9a5b00]" : ""}`}>{value}</span>
-    </div>
+    <section className="border-t border-zinc-900">
+      <div className="mx-auto max-w-[1200px] px-5 py-16">
+        <h2 className="text-2xl font-semibold tracking-tight">How it works</h2>
+        <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-5">
+          <div className="panel p-6">
+            <div className="flex items-center gap-2 text-zinc-300 font-medium">
+              <Coins size={16} weight="duotone" className="text-emerald-300" />
+              Fund your account
+            </div>
+            <p className="mt-2 text-sm text-zinc-400 leading-relaxed">
+              Create an account, get a Circle developer-controlled wallet, and bridge USDC in from any chain via App Kit.
+            </p>
+          </div>
+          <div className="panel p-6">
+            <div className="flex items-center gap-2 text-zinc-300 font-medium">
+              <Robot size={16} weight="duotone" className="text-emerald-300" />
+              Hand your agent the API key
+            </div>
+            <p className="mt-2 text-sm text-zinc-400 leading-relaxed">
+              Connect any MCP-capable client (Claude Desktop, Cursor, Codex) to <code className="amount text-zinc-300">/api/mcp</code>{" "}
+              using your <code className="amount text-zinc-300">cp_live_…</code> key.
+            </p>
+          </div>
+          <div className="panel p-6">
+            <div className="flex items-center gap-2 text-zinc-300 font-medium">
+              <ShieldCheck size={16} weight="duotone" className="text-emerald-300" />
+              Watch the receipts
+            </div>
+            <p className="mt-2 text-sm text-zinc-400 leading-relaxed">
+              Every citation carries an onchain receipt, a decision reason, and a cache hit when the same content was paid
+              before.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
-function CodeBlock({ value }: { value: string }) {
-  return <code className="block overflow-x-auto rounded-md border border-[var(--line)] bg-white p-3 text-xs">{value}</code>;
-}
-
-function Input(props: React.InputHTMLAttributes<HTMLInputElement> & { label: string }) {
-  const { label, ...inputProps } = props;
+function StackSection() {
   return (
-    <label className="block text-sm font-bold text-[var(--muted)]">
-      {label}
-      <input
-        {...inputProps}
-        className="mt-1 w-full rounded-md border border-[var(--line)] bg-white px-3 py-3 text-[var(--foreground)] placeholder:text-[#8a867c]"
-      />
-    </label>
+    <section className="border-t border-zinc-900">
+      <div className="mx-auto max-w-[1200px] px-5 py-16 grid grid-cols-1 md:grid-cols-2 gap-10 items-start">
+        <div>
+          <h2 className="text-2xl font-semibold tracking-tight">Built on the Circle stack</h2>
+          <p className="mt-3 text-zinc-400 leading-relaxed max-w-md">
+            CitationPay uses every layer Circle ships: developer-controlled wallets, App Kit for cross-chain deposits and
+            withdrawals, Gateway nanopayments (x402), and USDC on Arc.
+          </p>
+        </div>
+        <div className="panel-2 p-6">
+          <div className="flex items-center gap-2 text-zinc-300 font-medium">
+            <Stack size={16} weight="duotone" className="text-emerald-300" />
+            Stack
+          </div>
+          <ul className="mt-4 space-y-3 text-sm text-zinc-300">
+            <li className="flex items-start gap-3">
+              <CheckCircle size={16} weight="duotone" className="text-emerald-300 mt-0.5" />
+              <span>
+                <strong className="text-zinc-100">Circle Wallets</strong> — per-account EOA on Arc Testnet, controlled by an entity secret.
+              </span>
+            </li>
+            <li className="flex items-start gap-3">
+              <CheckCircle size={16} weight="duotone" className="text-emerald-300 mt-0.5" />
+              <span>
+                <strong className="text-zinc-100">Arc-native USDC</strong> — faucet credit or direct deposit to your Arc wallet. No bridges.
+              </span>
+            </li>
+            <li className="flex items-start gap-3">
+              <CheckCircle size={16} weight="duotone" className="text-emerald-300 mt-0.5" />
+              <span>
+                <strong className="text-zinc-100">App Kit · Send</strong> — publishers withdraw earnings to any Arc address.
+              </span>
+            </li>
+            <li className="flex items-start gap-3">
+              <CheckCircle size={16} weight="duotone" className="text-emerald-300 mt-0.5" />
+              <span>
+                <strong className="text-zinc-100">Gateway / x402</strong> — gasless, batched USDC settlement.
+              </span>
+            </li>
+            <li className="flex items-start gap-3">
+              <CheckCircle size={16} weight="duotone" className="text-emerald-300 mt-0.5" />
+              <span>
+                <strong className="text-zinc-100">MCP · Streamable HTTP</strong> — a real server that any agent can connect to.
+              </span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </section>
   );
 }
 
-function Empty({ text }: { text: string }) {
-  return <div className="mt-4 rounded-md border border-dashed border-[var(--line)] p-4 text-sm text-[var(--muted)]">{text}</div>;
+function PublisherCallout() {
+  return (
+    <section className="border-t border-zinc-900">
+      <div className="mx-auto max-w-[1200px] px-5 py-16">
+        <div className="panel-2 p-8 md:p-12 flex flex-col md:flex-row items-start md:items-center gap-8">
+          <div className="flex-1">
+            <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">Publishers get paid per citation.</h2>
+            <p className="mt-3 text-zinc-400 leading-relaxed max-w-xl">
+              Point CitationPay at your RSS feed. Set a per-citation price. Each time an agent grounds an answer in your
+              work, USDC lands in your wallet. No monthly minimum, no platform skim — just a programmable per-citation
+              revenue stream.
+            </p>
+            <div className="mt-5">
+              <Link href="/publish">
+                <Button variant="ghost">
+                  <Storefront size={15} weight="regular" /> Become a publisher
+                </Button>
+              </Link>
+            </div>
+          </div>
+          <div className="w-full md:w-[320px] shrink-0">
+            <div className="panel p-5">
+              <div className="text-[11px] uppercase tracking-wider text-zinc-500">Example receipt</div>
+              <div className="mt-3 text-sm text-zinc-300">The rhapsode was paid for the performance the crowd actually heard.</div>
+              <dl className="mt-4 space-y-2 text-xs text-zinc-400">
+                <div className="flex justify-between">
+                  <dt>Citation</dt>
+                  <dd className="amount text-zinc-200">$0.001000</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt>Payer</dt>
+                  <dd className="amount text-zinc-200">{shortAddress("0x4ba1e9e275ef61b56c99532d0066506436201d73")}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt>Seller</dt>
+                  <dd className="amount text-emerald-300">vitalik.eth</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt>Network</dt>
+                  <dd className="amount text-zinc-200">Arc Testnet</dd>
+                </div>
+              </dl>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 }
 
-function actionClass(action: "paid" | "cached" | "skipped") {
-  if (action === "paid") return "bg-[#e4f8ee] text-[#0d6b47]";
-  if (action === "cached") return "bg-[#e9edff] text-[#3140a0]";
-  return "bg-[#f4efe5] text-[#76664d]";
-}
-
-function toneClass(tone: "neutral" | "good" | "warn") {
-  if (tone === "good") return "border-[#9dd8bd] bg-[#eaf8f0] text-[#0d6b47]";
-  if (tone === "warn") return "border-[#e2b45c] bg-[#fff6df] text-[#68440b]";
-  return "border-[var(--line)] bg-white text-[var(--foreground)]";
-}
-
-async function expectOk<T = unknown>(response: Response): Promise<T> {
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(typeof data.error === "string" ? data.error : "Request failed");
+function DeveloperCallout({ signedIn }: { signedIn: boolean }) {
+  return (
+    <section className="border-t border-zinc-900">
+      <div className="mx-auto max-w-[1200px] px-5 py-16 grid grid-cols-1 md:grid-cols-2 gap-10 items-center">
+        <div>
+          <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">A real MCP server, not a wrapper.</h2>
+          <p className="mt-3 text-zinc-400 leading-relaxed max-w-md">
+            <code className="amount text-zinc-200">/api/mcp</code> speaks the official Model Context Protocol over
+            Streamable HTTP. Connect Claude Desktop, Cursor, or Codex directly. Test any tool in the browser from the MCP
+            page.
+          </p>
+        </div>
+        <div className="panel-2 p-6 amount text-xs leading-relaxed overflow-x-auto">
+          <pre className="text-zinc-300">{`{
+  "mcpServers": {
+    "citationpay": {
+      "url": "https://lepton.thecanteenapp.com/api/mcp",
+      "transport": "http",
+      "headers": {
+        "Authorization": "Bearer cp_live_…"
+      }
+    }
   }
-  return data as T;
-}
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Something failed";
+}`}</pre>
+        </div>
+        <div className="md:col-span-2 flex flex-wrap gap-3">
+          {signedIn ? (
+            <Link href="/app/mcp">
+              <Button>
+                <Quotes size={15} weight="duotone" /> Open the MCP page
+              </Button>
+            </Link>
+          ) : (
+            <Link href="/login">
+              <Button>
+                <Quotes size={15} weight="duotone" /> Sign in to test MCP
+              </Button>
+            </Link>
+          )}
+          <Link href="/publish">
+            <Button variant="ghost">Publisher docs</Button>
+          </Link>
+        </div>
+      </div>
+    </section>
+  );
 }

@@ -1,36 +1,221 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f5f7f6;
-  --surface: #eef4f1;
-  --panel: #fbfcfb;
-  --foreground: #111815;
-  --muted: #5b6661;
-  --ink: #13231d;
-  --accent: #176b55;
-  --line: #d5dfda;
+  /* Mint surfaces */
+  --background: #09090b;
+  --surface: #0c0c0e;
+  --panel: #111114;
+  --panel-2: #16161a;
+  --line: #232328;
+  --line-soft: #1a1a1f;
+
+  /* Ink */
+  --foreground: #f4f4f5;
+  --muted: #a1a1aa;
+  --subtle: #71717a;
+  --ink: #0a0a0a;
+
+  /* Single locked accent — lepton emerald */
+  --accent: #34d399;
+  --accent-strong: #10b981;
+  --accent-soft: rgba(52, 211, 153, 0.12);
+  --accent-line: rgba(52, 211, 153, 0.28);
+
+  /* Semantic */
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+
+  /* Shape lock: all-soft */
+  --radius-card: 14px;
+  --radius-input: 10px;
+  --radius-pill: 999px;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html,
 body {
   margin: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01", "cv11";
+}
+
+body {
+  font-family: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  min-height: 100dvh;
+  background-image:
+    radial-gradient(60rem 40rem at 80% -10%, rgba(52, 211, 153, 0.06), transparent 60%),
+    radial-gradient(40rem 30rem at 0% 110%, rgba(52, 211, 153, 0.04), transparent 60%);
+  background-attachment: fixed;
 }
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
+  color: inherit;
 }
 
-.grain {
-  background-image:
-    linear-gradient(rgba(32, 22, 12, 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(32, 22, 12, 0.055) 1px, transparent 1px);
-  background-size: 26px 26px;
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--foreground);
+}
+
+::placeholder {
+  color: var(--subtle);
+}
+
+/* Scrollbar */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #232328;
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #2a2a30;
+}
+
+/* Reduce motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@utility panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+}
+
+@utility panel-2 {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+}
+
+@utility input-base {
+  width: 100%;
+  background: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-input);
+  padding: 10px 12px;
+  color: var(--foreground);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+@utility input-base-focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+@utility btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--accent);
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: var(--radius-pill);
+  padding: 10px 16px;
+  border: 1px solid var(--accent);
+  cursor: pointer;
+  transition: transform 120ms ease, background 120ms ease, box-shadow 120ms ease;
+  white-space: nowrap;
+}
+@utility btn-primary-hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+@utility btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: transparent;
+  color: var(--foreground);
+  font-weight: 500;
+  font-size: 14px;
+  border-radius: var(--radius-pill);
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+  white-space: nowrap;
+}
+@utility btn-ghost-hover {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+@utility btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: transparent;
+  color: var(--danger);
+  font-weight: 500;
+  font-size: 13px;
+  border-radius: var(--radius-pill);
+  padding: 8px 12px;
+  border: 1px solid rgba(248, 113, 113, 0.28);
+  cursor: pointer;
+}
+
+@utility chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--radius-pill);
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+}
+@utility chip-accent {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+@utility amount {
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+@utility hairline {
+  border-top: 1px solid var(--line);
 }

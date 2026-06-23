@@ -9,6 +9,7 @@ export type AgentResult = {
   answer: string;
   spentMicroUsdc: number;
   cacheEvents: number;
+  reasoningUsed: boolean;
   ledger: Array<{
     sourceId: string;
     title: string;
@@ -34,6 +35,13 @@ export type AgentResult = {
 
 type EvaluatedDecision = AgentDecision & { action: "paid" | "skipped" };
 
+type LlmDecision = {
+  sourceId: string;
+  verdict: "pay" | "skip";
+  confidence: number;
+  reasoning: string;
+};
+
 export async function runCitationAgent(
   query: string,
   budgetMicroUsdc: number,
@@ -51,7 +59,8 @@ export async function runCitationAgent(
 
   try {
     const candidates = await store.searchSources(query, 16);
-    const evaluated = evaluateSources(query, candidates, budgetMicroUsdc);
+    const llmDecisions = await decideWithLlm(query, candidates, budgetMicroUsdc).catch(() => []);
+    const evaluated = evaluateSources(query, candidates, budgetMicroUsdc, llmDecisions);
     const selected = evaluated.filter((decision) => decision.action === "paid").slice(0, 4);
     const selectedIds = new Set(selected.map((decision) => decision.source.id));
     const cacheBySourceId = new Map(
@@ -144,6 +153,7 @@ export async function runCitationAgent(
       answer,
       spentMicroUsdc: spent,
       cacheEvents,
+      reasoningUsed: llmDecisions.length > 0,
       ledger: evaluated.map((decision) => ({
         sourceId: decision.source.id,
         title: decision.source.title,
@@ -185,7 +195,13 @@ export function chooseSources(query: string, sources: SourceWithPublisher[], bud
     .map(({ source, score, reason }) => ({ source, score, reason }));
 }
 
-export function evaluateSources(query: string, sources: SourceWithPublisher[], budgetMicroUsdc: number): EvaluatedDecision[] {
+export function evaluateSources(
+  query: string,
+  sources: SourceWithPublisher[],
+  budgetMicroUsdc: number,
+  llmDecisions: LlmDecision[] = []
+): EvaluatedDecision[] {
+  const llmMap = new Map(llmDecisions.map((d) => [d.sourceId, d]));
   const terms = query.toLowerCase().split(/\W+/).filter((term) => term.length > 2);
   const ranked = sources
     .map((source) => {
@@ -194,12 +210,15 @@ export function evaluateSources(query: string, sources: SourceWithPublisher[], b
       const freshness = freshnessBoost(source.published_at);
       const priceFit = source.price_micro_usdc <= Math.max(1, budgetMicroUsdc / 4) ? 6 : 0;
       const publisherSignal = source.publisher.name ? 2 : 0;
+      const llm = llmMap.get(source.id);
+      const llmBoost = llm ? llm.confidence * 10 : 0;
       return {
         source,
-        score: relevance + freshness + priceFit + publisherSignal,
+        score: relevance + freshness + priceFit + publisherSignal + llmBoost,
         relevance,
         freshness,
-        priceFit
+        priceFit,
+        llm
       };
     })
     .filter((entry) => entry.score > 0)
@@ -211,14 +230,16 @@ export function evaluateSources(query: string, sources: SourceWithPublisher[], b
 
   for (const entry of ranked) {
     const paidCount = decisions.filter((decision) => decision.action === "paid").length;
-    const scoreBreakdown = `${entry.relevance} relevance, ${entry.freshness} freshness, ${entry.priceFit} price-fit`;
+    const scoreBreakdown = `${entry.relevance} relevance, ${entry.freshness} freshness, ${entry.priceFit} price-fit${entry.llm ? `, ${entry.llm.confidence} LLM confidence` : ""}`;
 
     if (paidCount >= 4) {
       decisions.push({
         source: entry.source,
         score: entry.score,
         action: "skipped",
-        reason: `Skipped after the agent filled its four-citation answer set (${scoreBreakdown}).`
+        reason: entry.llm
+          ? `Skipped after filling four citations. LLM said: ${entry.llm.reasoning}`
+          : `Skipped after the agent filled its four-citation answer set (${scoreBreakdown}).`
       });
       continue;
     }
@@ -233,6 +254,16 @@ export function evaluateSources(query: string, sources: SourceWithPublisher[], b
       continue;
     }
 
+    if (entry.llm && entry.llm.verdict === "skip") {
+      decisions.push({
+        source: entry.source,
+        score: entry.score,
+        action: "skipped",
+        reason: `LLM evaluated this source as not worth the price: ${entry.llm.reasoning}`
+      });
+      continue;
+    }
+
     const diversity = paidPublisherIds.has(entry.source.publisher.id)
       ? "same publisher as an earlier paid source"
       : "adds publisher diversity";
@@ -242,7 +273,9 @@ export function evaluateSources(query: string, sources: SourceWithPublisher[], b
       source: entry.source,
       score: entry.score,
       action: "paid",
-      reason: `Paid because it scored ${entry.score} (${scoreBreakdown}), fits the budget, and ${diversity}. Remaining budget after purchase: ${formatMicroUsdc(budgetMicroUsdc - spent)}.`
+      reason: entry.llm
+        ? `Paid because the LLM rated it ${entry.llm.confidence}/1 confidence (${entry.llm.reasoning}). Also scored ${entry.score} (${scoreBreakdown}), fits the budget, and ${diversity}.`
+        : `Paid because it scored ${entry.score} (${scoreBreakdown}), fits the budget, and ${diversity}. Remaining budget after purchase: ${formatMicroUsdc(budgetMicroUsdc - spent)}.`
     });
   }
 
@@ -352,4 +385,90 @@ function freshnessBoost(date: string | null) {
   if (ageDays < 14) return 8;
   if (ageDays < 90) return 4;
   return 0;
+}
+
+async function decideWithLlm(
+  query: string,
+  candidates: SourceWithPublisher[],
+  budgetMicroUsdc: number
+): Promise<LlmDecision[]> {
+  if (!process.env.DGRID_API_KEY || candidates.length === 0) {
+    return [];
+  }
+
+  const budgetUsd = (budgetMicroUsdc / 1_000_000).toFixed(6);
+  const sources = candidates.slice(0, 10).map((s, i) => ({
+    index: i,
+    id: s.id,
+    title: s.title,
+    publisher: s.publisher.name,
+    price: formatMicroUsdc(s.price_micro_usdc),
+    excerpt: s.excerpt.slice(0, 200)
+  }));
+
+  const systemPrompt = `You are a citation purchasing agent. Given a research query, a budget, and a list of candidate sources with prices, decide which sources are worth paying for.
+
+For each source, return a JSON object with:
+- sourceId: the source's id
+- verdict: "pay" or "skip"
+- confidence: a number from 0.0 to 1.0
+- reasoning: one sentence explaining your verdict
+
+Return ONLY a JSON array of these objects. No markdown, no other text.`;
+
+  const userPrompt = JSON.stringify({
+    query,
+    budget: `${budgetUsd} USDC`,
+    sources
+  });
+
+  try {
+    const response = await fetch(`${dgridBaseUrl()}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.DGRID_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: process.env.DGRID_MODEL || "openai/gpt-4o",
+        temperature: 0.1,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ]
+      }),
+      signal: AbortSignal.timeout(15_000)
+    });
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const data = (await response.json()) as DgridChatResponse;
+    const content = normalizeDgridContent(data.choices?.[0]?.message?.content);
+    if (!content) return [];
+
+    const jsonText = extractJson(content);
+    if (!jsonText) return [];
+
+    const parsed = JSON.parse(jsonText) as { decisions?: LlmDecision[] } | LlmDecision[];
+    const decisions = Array.isArray(parsed) ? parsed : parsed.decisions || [];
+    return decisions.filter((d) => d.sourceId && (d.verdict === "pay" || d.verdict === "skip"));
+  } catch {
+    return [];
+  }
+}
+
+function extractJson(text: string): string | null {
+  const arrayStart = text.indexOf("[");
+  const arrayEnd = text.lastIndexOf("]");
+  if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
+    return text.slice(arrayStart, arrayEnd + 1);
+  }
+  const objStart = text.indexOf("{");
+  const objEnd = text.lastIndexOf("}");
+  if (objStart !== -1 && objEnd !== -1 && objEnd > objStart) {
+    return text.slice(objStart, objEnd + 1);
+  }
+  return null;
 }
