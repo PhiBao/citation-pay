@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { runCitationAgent } from "@/lib/agent";
 import { parseUsdToMicroUsdc } from "@/lib/price";
-import { enforcePublicAgentLimits } from "@/lib/security";
+import { requireAccountSession } from "@/lib/accounts";
 
 const schema = z.object({
   query: z.string().min(8).max(600),
@@ -14,13 +14,17 @@ export async function POST(request: Request) {
     if (!parsed.success) {
       return Response.json({ error: parsed.error.issues[0]?.message || "Invalid agent request" }, { status: 400 });
     }
+    const session = await requireAccountSession(request);
     const budgetMicroUsdc = parseUsdToMicroUsdc(parsed.data.budgetUsd);
-    const limitError = enforcePublicAgentLimits(request, budgetMicroUsdc);
-    if (limitError) return limitError;
-    const result = await runCitationAgent(parsed.data.query, budgetMicroUsdc);
+    const result = await runCitationAgent(parsed.data.query, budgetMicroUsdc, { session, clientType: "web" });
     return Response.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Agent payment run failed";
-    return Response.json({ error: message }, { status: 500 });
+    const status = /api key|required|invalid|disabled/i.test(message)
+      ? 401
+      : /balance|limit/i.test(message)
+        ? 402
+        : 500;
+    return Response.json({ error: message }, { status });
   }
 }

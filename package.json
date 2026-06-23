@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@circle-fin/x402-batching": "^3.0.4",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@supabase/supabase-js": "^2.50.0",
     "@x402/core": "^2.14.0",
     "@x402/evm": "^2.14.0",

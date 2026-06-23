@@ -33,8 +33,17 @@ export const maxPublicBudgetMicroUsdc = () => {
 };
 
 export const requireRealPaymentEnv = () => {
-  const missing = ["BUYER_PRIVATE_KEY", "BUYER_ADDRESS"].filter((key) => !process.env[key]);
+  const missing = [
+    platformSettlementPrivateKey() ? "" : "PLATFORM_SETTLEMENT_PRIVATE_KEY",
+    platformSettlementAddress() ? "" : "PLATFORM_SETTLEMENT_ADDRESS"
+  ].filter(Boolean);
   if (missing.length > 0) {
     throw new Error(`Missing real payment env: ${missing.join(", ")}`);
   }
 };
+
+export const platformSettlementPrivateKey = () =>
+  process.env.PLATFORM_SETTLEMENT_PRIVATE_KEY || process.env.BUYER_PRIVATE_KEY || "";
+
+export const platformSettlementAddress = () =>
+  process.env.PLATFORM_SETTLEMENT_ADDRESS || process.env.BUYER_ADDRESS || "";

@@ -1,6 +1,7 @@
 import { getStore } from "@/lib/db";
 import { payForSource } from "@/lib/payment";
 import { formatMicroUsdc } from "@/lib/price";
+import { assertAccountCanSpendToday, debitAccountForRun, type AccountSession } from "@/lib/accounts";
 import type { AgentDecision, PaidSourceCard, PaymentReceipt, SourceWithPublisher } from "@/lib/types";
 
 export type AgentResult = {
@@ -25,13 +26,28 @@ export type AgentResult = {
     price: string;
     receipt: string;
   }>;
+  account?: {
+    id: string;
+    balanceMicroUsdc: number;
+  };
 };
 
 type EvaluatedDecision = AgentDecision & { action: "paid" | "skipped" };
 
-export async function runCitationAgent(query: string, budgetMicroUsdc: number): Promise<AgentResult> {
+export async function runCitationAgent(
+  query: string,
+  budgetMicroUsdc: number,
+  context?: { session?: AccountSession; clientType?: "web" | "mcp" | "internal" }
+): Promise<AgentResult> {
   const store = getStore();
-  const run = await store.createRun(query, budgetMicroUsdc);
+  if (context?.session) {
+    await assertAccountCanSpendToday(context.session.account, budgetMicroUsdc);
+  }
+  const run = await store.createRun(query, budgetMicroUsdc, {
+    accountId: context?.session?.account.id,
+    apiKeyId: context?.session?.apiKey.id,
+    clientType: context?.clientType || "web"
+  });
 
   try {
     const candidates = await store.searchSources(query, 16);
@@ -98,6 +114,7 @@ export async function runCitationAgent(query: string, budgetMicroUsdc: number): 
       spent += decision.source.price_micro_usdc;
       const payment = await store.createPayment({
         run_id: run.id,
+        account_id: context?.session?.account.id || null,
         source_id: decision.source.id,
         payer_wallet: receipt.payerWallet,
         seller_wallet: receipt.sellerWallet,
@@ -118,6 +135,9 @@ export async function runCitationAgent(query: string, budgetMicroUsdc: number): 
 
     const answer = await composePaidAnswer(query, paidCards, budgetMicroUsdc, spent);
     await store.finishRun(run.id, "complete", answer, spent);
+    const account = context?.session
+      ? await debitAccountForRun(context.session.account, run, spent)
+      : null;
 
     return {
       runId: run.id,
@@ -144,7 +164,13 @@ export async function runCitationAgent(query: string, budgetMicroUsdc: number): 
         reason: decision.reason,
         price: formatMicroUsdc(decision.source.price_micro_usdc),
         receipt: receipt.transferId
-      }))
+      })),
+      account: account
+        ? {
+            id: account.id,
+            balanceMicroUsdc: account.balance_micro_usdc
+          }
+        : undefined
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Agent run failed";

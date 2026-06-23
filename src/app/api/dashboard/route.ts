@@ -14,6 +14,7 @@ export async function GET() {
     });
   } catch (error) {
     return Response.json({
+      accounts: [],
       publishers: [],
       feeds: [],
       sources: [],

@@ -7,7 +7,15 @@ import {
   CIRCLE_BATCHING_VERSION,
   GATEWAY_AUTH_VALIDITY_WINDOW_SECONDS
 } from "@circle-fin/x402-batching";
-import { appUrl, arcNetwork, facilitatorUrl, paymentMode, requireRealPaymentEnv } from "@/lib/env";
+import {
+  appUrl,
+  arcNetwork,
+  facilitatorUrl,
+  paymentMode,
+  platformSettlementAddress,
+  platformSettlementPrivateKey,
+  requireRealPaymentEnv
+} from "@/lib/env";
 import { formatMicroUsdc, microUsdcToSdkPrice } from "@/lib/price";
 import type { PaymentReceipt, SourceWithPublisher } from "@/lib/types";
 
@@ -137,7 +145,7 @@ export async function payForSource(source: SourceWithPublisher, runId: string): 
   requireRealPaymentEnv();
   const client = new GatewayClient({
     chain: "arcTestnet",
-    privateKey: process.env.BUYER_PRIVATE_KEY as `0x${string}`
+    privateKey: platformSettlementPrivateKey() as `0x${string}`
   });
 
   if (source.publisher.wallet_address.toLowerCase() === client.address.toLowerCase()) {
@@ -157,7 +165,7 @@ export async function payForSource(source: SourceWithPublisher, runId: string): 
   });
 
   return {
-    payerWallet: process.env.BUYER_ADDRESS || client.address,
+    payerWallet: platformSettlementAddress() || client.address,
     sellerWallet: source.publisher.wallet_address,
     amountMicroUsdc: Number(result.amount),
     formattedAmount: result.formattedAmount,

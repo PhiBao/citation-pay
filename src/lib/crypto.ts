@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 export function uuid() {
   return randomUUID();
@@ -6,6 +6,10 @@ export function uuid() {
 
 export function sha256(input: string) {
   return createHash("sha256").update(input).digest("hex");
+}
+
+export function randomToken(bytes = 24) {
+  return randomBytes(bytes).toString("base64url");
 }
 
 export function nowIso() {

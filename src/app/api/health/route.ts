@@ -39,6 +39,7 @@ async function checkDatabase() {
     return {
       ok: true,
       mode: "supabase",
+      accounts: dashboard.accounts.length,
       publishers: dashboard.publishers.length,
       sources: dashboard.sources.length,
       payments: dashboard.payments.length,

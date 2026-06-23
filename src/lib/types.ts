@@ -33,6 +33,9 @@ export type Source = {
 
 export type AgentRun = {
   id: string;
+  account_id: string | null;
+  api_key_id: string | null;
+  client_type: "web" | "mcp" | "internal";
   query: string;
   budget_micro_usdc: number;
   spent_micro_usdc: number;
@@ -44,6 +47,7 @@ export type AgentRun = {
 export type CitationPayment = {
   id: string;
   run_id: string;
+  account_id: string | null;
   source_id: string;
   payer_wallet: string;
   seller_wallet: string;
@@ -51,6 +55,41 @@ export type CitationPayment = {
   network: string;
   transfer_id: string;
   status: "mocked" | "settled" | "failed";
+  created_at: string;
+};
+
+export type Account = {
+  id: string;
+  name: string;
+  email: string;
+  status: "active" | "disabled";
+  balance_micro_usdc: number;
+  trial_credit_micro_usdc: number;
+  per_run_limit_micro_usdc: number;
+  daily_limit_micro_usdc: number;
+  circle_wallet_id: string | null;
+  circle_wallet_address: string | null;
+  created_at: string;
+};
+
+export type AccountApiKey = {
+  id: string;
+  account_id: string;
+  name: string;
+  key_prefix: string;
+  key_hash: string;
+  last_used_at: string | null;
+  created_at: string;
+};
+
+export type LedgerEntry = {
+  id: string;
+  account_id: string;
+  run_id: string | null;
+  kind: "credit" | "debit" | "refund";
+  amount_micro_usdc: number;
+  balance_after_micro_usdc: number;
+  description: string;
   created_at: string;
 };
 
@@ -105,6 +144,7 @@ export type AgentDecision = {
 };
 
 export type DashboardData = {
+  accounts: Account[];
   publishers: Publisher[];
   feeds: Feed[];
   sources: SourceWithPublisher[];
