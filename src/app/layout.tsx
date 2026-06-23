@@ -26,6 +26,9 @@ export const metadata: Metadata = {
   description:
     "CitationPay makes citation a payable event. AI agents search, score, and pay per-citation via x402 nanopayments on Arc. Publishers earn USDC the moment their work grounds an answer.",
   applicationName: "CitationPay",
+  icons: {
+    icon: [{ url: "/favicon.svg", type: "image/svg+xml" }, { url: "/favicon.png", type: "image/png" }],
+  },
   keywords: [
     "x402",
     "nanopayments",

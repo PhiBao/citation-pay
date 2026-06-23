@@ -100,7 +100,7 @@ export default function DepositPage() {
       <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
         <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">Fund your account on Arc</h1>
         <p className="text-sm text-zinc-500 mt-1">
-          Arc-native USDC. No bridges, no other chains. Get testnet USDC and deposit directly.
+          Arc-native USDC. Fund your balance directly on Arc Testnet.
         </p>
 
         <div className="mt-6 panel p-6">

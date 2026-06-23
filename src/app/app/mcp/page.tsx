@@ -278,7 +278,7 @@ export default function McpPage() {
           <div>
             <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">MCP server</h1>
             <p className="text-sm text-zinc-500 mt-1">
-              Real <span className="text-zinc-300">@modelcontextprotocol/sdk</span> server over Streamable HTTP — speak it from any MCP-capable client.
+              Model Context Protocol server over Streamable HTTP — connect any MCP-capable client.
             </p>
           </div>
         </div>

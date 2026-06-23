@@ -369,9 +369,9 @@ function DeveloperCallout({ signedIn }: { signedIn: boolean }) {
     <section className="border-t border-zinc-900">
       <div className="mx-auto max-w-[1200px] px-5 py-16 grid grid-cols-1 md:grid-cols-2 gap-10 items-center">
         <div>
-          <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">A real MCP server, not a wrapper.</h2>
+          <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">Agent-native surface</h2>
           <p className="mt-3 text-zinc-400 leading-relaxed max-w-md">
-            <code className="amount text-zinc-200">/api/mcp</code> speaks the official Model Context Protocol over
+            <code className="amount text-zinc-200">/api/mcp</code> speaks Model Context Protocol over
             Streamable HTTP. Connect Claude Desktop, Cursor, or Codex directly. Test any tool in the browser from the MCP
             page.
           </p>
