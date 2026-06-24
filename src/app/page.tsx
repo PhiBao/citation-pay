@@ -6,6 +6,7 @@ import {
   ArrowsClockwise,
   CheckCircle,
   Coins,
+  Globe,
   Lightning,
   Quotes,
   Robot,
@@ -65,6 +66,7 @@ export default function LandingPage() {
       <LiveProof totals={totals} mode={data?.paymentMode} />
       <HowItWorks />
       <StackSection />
+      <FediverseSection />
       <PublisherCallout />
       <DeveloperCallout signedIn={status === "authenticated"} />
     </div>
@@ -308,6 +310,60 @@ function StackSection() {
               </span>
             </li>
           </ul>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function FediverseSection() {
+  return (
+    <section className="border-t border-zinc-900">
+      <div className="mx-auto max-w-[1200px] px-5 py-16">
+        <div className="flex items-center gap-2 text-xs text-zinc-500 mb-2">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          Distribution
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-10 items-start">
+          <div>
+            <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">
+              Built on Mastodon — 50k+ instances, 15M+ users.
+            </h2>
+            <p className="mt-4 text-zinc-400 leading-relaxed max-w-md">
+              CitationPay imports public posts from any Mastodon instance as priced sources. Every creator on the
+              fediverse earns USDC when an AI agent cites their work. No plugin to install — just the public Mastodon API.
+            </p>
+            <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+              <div className="panel-2 p-4">
+                <div className="text-xs text-zinc-500 uppercase tracking-wider">Open graph</div>
+                <div className="mt-1 text-zinc-200">50,000+ Mastodon instances</div>
+                <div className="text-xs text-zinc-500 mt-0.5">Any ActivityPub server with a public API</div>
+              </div>
+              <div className="panel-2 p-4">
+                <div className="text-xs text-zinc-500 uppercase tracking-wider">No plugin needed</div>
+                <div className="mt-1 text-zinc-200">Zero-config import</div>
+                <div className="text-xs text-zinc-500 mt-0.5">Paste an instance URL, get priced sources</div>
+              </div>
+            </div>
+            <div className="mt-4">
+              <Link href="/mastodon">
+                <Button>
+                  <Globe size={15} weight="bold" /> Import from Mastodon
+                </Button>
+              </Link>
+            </div>
+          </div>
+          <div className="panel-2 p-5 amount text-xs leading-relaxed">
+            <div className="text-xs uppercase tracking-wider text-zinc-500 mb-3">Works with any fediverse instance</div>
+            <div className="grid grid-cols-2 gap-2 text-zinc-300">
+              {["mastodon.social", "fosstodon.org", "hachyderm.io", "mstdn.social", "indieweb.social", "techhub.social", "mas.to", "mastodon.online"].map((h) => (
+                <div key={h} className="panel px-3 py-2 text-zinc-300">{h}</div>
+              ))}
+            </div>
+            <p className="mt-3 text-zinc-500">
+              Also compatible with Pleroma, Akkoma, GoToSocial, and any ActivityPub server with a public API.
+            </p>
+          </div>
         </div>
       </div>
     </section>
