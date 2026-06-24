@@ -9,9 +9,7 @@ const loginSchema = z.object({
 
 export async function POST(request: Request) {
   let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
+  try { body = await request.json(); } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
   const parsed = loginSchema.safeParse(body);
@@ -19,13 +17,29 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });
   }
   const { email, password } = parsed.data;
+
   const supabase = createSupabaseServer();
-  const { error } = await supabase.auth.signInWithPassword({
+  const { data, error } = await supabase.auth.signInWithPassword({
     email: email.toLowerCase(),
     password
   });
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 401 });
   }
-  return NextResponse.json({ redirect: "/app" });
+
+  // Build response with Set-Cookie headers from the session
+  const { cookies } = await import("next/headers");
+  const store = await cookies();
+  const allCookies = store.getAll();
+  const response = NextResponse.json({ redirect: "/app" });
+  for (const cookie of allCookies) {
+    response.cookies.set(cookie.name, cookie.value, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: 60 * 60 * 24 * 400
+    });
+  }
+  return response;
 }

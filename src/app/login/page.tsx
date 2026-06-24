@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "motion/react";
 import Link from "next/link";
@@ -24,7 +24,7 @@ function LoginPageInner() {
   const params = useSearchParams();
   const router = useRouter();
   const toast = useToast();
-  const { refresh } = useSession();
+  const { status } = useSession();
   const initialMode: Mode = params.get("mode") === "signin" ? "signin" : "signup";
   const [mode, setMode] = useState<Mode>(initialMode);
   const [email, setEmail] = useState("");
@@ -32,6 +32,13 @@ function LoginPageInner() {
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (status === "authenticated") {
+      router.replace("/app");
+    }
+  }, [status, router]);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -42,15 +49,16 @@ function LoginPageInner() {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ email, password, name: name || email.split("@")[0] })
       });
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "Authentication failed");
       }
-      await refresh();
-      toast.push("success", mode === "signup" ? "Welcome to CitationPay." : "Signed in.");
-      router.push(data.redirect || "/app");
+      // Hard navigate — guarantees the browser processes the Set-Cookie header
+      // before rendering the next page. router.push can race with cookie processing.
+      window.location.href = data.redirect || "/app";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed");
     } finally {
@@ -76,7 +84,7 @@ function LoginPageInner() {
           </h1>
           <p className="mt-1.5 text-sm text-zinc-400">
             {mode === "signup"
-              ? "Trial credit, a real Arc wallet, and a default agent API key on us."
+              ? "Trial credit, an Arc wallet, and a default agent API key on us."
               : "Sign in to fund your balance and run paid citations."}
           </p>
 

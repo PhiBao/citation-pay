@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getStore } from "@/lib/db";
-import { serializeAccount } from "@/lib/accounts";
+import { serializeAccount, provisionAccount } from "@/lib/accounts";
+import { ensureAccountWallet } from "@/lib/wallets/wallets";
 
 export async function GET() {
   try {
@@ -12,10 +13,32 @@ export async function GET() {
     }
     const supabaseUserId = auth.user.id;
     const store = getStore();
-    const account = await store.findAccountBySupabaseUser(supabaseUserId);
+    let account = await store.findAccountBySupabaseUser(supabaseUserId);
+
+    if (!account && auth.user.email) {
+      const existingByEmail = await store.findAccountByEmail(auth.user.email);
+      if (existingByEmail) {
+        await store.linkSupabaseUser(existingByEmail.id, supabaseUserId);
+        account = existingByEmail;
+      } else {
+        await provisionAccount({
+          name: (auth.user.user_metadata as { name?: string } | null)?.name || auth.user.email.split("@")[0],
+          email: auth.user.email,
+          supabaseUserId
+        });
+        account = (await store.findAccountBySupabaseUser(supabaseUserId))!;
+      }
+    }
+
     if (!account) {
       return NextResponse.json({ user: null });
     }
+
+    // Fire-and-forget wallet creation — slow Circle API call, don't block
+    if (!account.circle_wallet_address) {
+      ensureAccountWallet(account.id).catch(() => {});
+    }
+
     return NextResponse.json({
       user: {
         id: auth.user.id,

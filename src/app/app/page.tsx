@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useEffect, useState, useCallback } from "react";
+import { Suspense, useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "motion/react";
@@ -82,7 +82,10 @@ function AccountPageInner() {
     } finally {
       setLoading(false);
     }
-  }, [router, toast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router]);
+
+  const welcomeShown = useRef(false);
 
   useEffect(() => {
     if (status === "anonymous") {
@@ -91,12 +94,21 @@ function AccountPageInner() {
     }
     if (status === "authenticated") {
       void load();
-      if (params.get("welcome") === "1") {
+      if (!welcomeShown.current && params.get("welcome") === "1") {
+        welcomeShown.current = true;
         toast.push("success", "Welcome to CitationPay. Trial credit added.");
         router.replace("/app");
       }
     }
   }, [status, load, params, router, toast]);
+
+  // Re-fetch if wallet is still being minted
+  useEffect(() => {
+    if (data && !data.account.circleWalletAddress) {
+      const timer = setTimeout(() => { void load(); }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [data, load]);
 
   if (status === "loading" || loading || !data) {
     return (

@@ -1,5 +1,5 @@
 "use client";
-import { createContext, useCallback, useContext, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { CheckCircle, Warning, Info, X } from "@phosphor-icons/react/dist/ssr";
 
 type ToastKind = "success" | "error" | "info";
@@ -25,8 +25,10 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     }, 4200);
   }, []);
 
+  const value = useMemo(() => ({ push }), [push]);
+
   return (
-    <ToastContext.Provider value={{ push }}>
+    <ToastContext.Provider value={value}>
       {children}
       <div className="pointer-events-none fixed bottom-6 right-6 z-50 flex flex-col gap-2">
         {toasts.map((t) => (
