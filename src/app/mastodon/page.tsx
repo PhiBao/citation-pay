@@ -22,6 +22,7 @@ type ImportResult = {
   imported: number;
   authors: number;
   details: Array<{ author: string; posts: number; price: string }>;
+  error?: string;
 };
 
 export default function MastodonPage() {
@@ -220,11 +221,16 @@ export default function MastodonPage() {
                   </div>
                 ) : result ? (
                   <div className="space-y-4">
+                    {result.error && (
+                      <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-300">
+                        <span className="font-medium">Note:</span> {result.error}
+                      </div>
+                    )}
                     <div className="grid grid-cols-2 gap-3">
                       <div className="panel-2 p-3">
                         <div className="text-[10px] uppercase tracking-wider text-zinc-500">Instance</div>
-                        <div className="text-sm font-medium text-zinc-200 mt-1">{result.instance.title}</div>
-                        <div className="text-xs text-zinc-500">{result.instance.host} · {result.instance.users.toLocaleString()} users</div>
+                        <div className="text-sm font-medium text-zinc-200 mt-1">{result.instance?.title || "Unknown"}</div>
+                        <div className="text-xs text-zinc-500">{result.instance?.host || ""} · {result.instance?.users?.toLocaleString() || "?"} users</div>
                       </div>
                       <div className="panel-2 p-3">
                         <div className="text-[10px] uppercase tracking-wider text-zinc-500">Imported</div>
@@ -232,10 +238,11 @@ export default function MastodonPage() {
                         <div className="text-xs text-zinc-500">{result.authors} authors</div>
                       </div>
                     </div>
+                    {(result.details || []).length > 0 && (
                     <div>
                       <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Authors</div>
                       <ul className="space-y-1.5 text-xs">
-                        {result.details.map((d) => (
+                        {(result.details || []).map((d) => (
                           <li key={d.author} className="flex justify-between items-center panel-2 px-3 py-2">
                             <span className="text-zinc-300">@{d.author}</span>
                             <span className="text-zinc-500">{d.posts} posts · {d.price}</span>
@@ -243,6 +250,7 @@ export default function MastodonPage() {
                         ))}
                       </ul>
                     </div>
+                    )}
                     <div className="panel-2 p-3 text-xs text-zinc-500">
                       <span className="text-emerald-300">Ready.</span> These posts are now priced sources. AI agents that match them in a search will pay per citation. Post
                       authors earn USDC on Arc.

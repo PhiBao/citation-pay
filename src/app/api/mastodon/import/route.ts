@@ -27,17 +27,28 @@ export async function POST(request: Request) {
 
     // Fetch posts from the Mastodon instance
     let posts;
-    if (parsed.data.mode === "hashtag" && parsed.data.hashtag) {
-      posts = await searchHashtag(parsed.data.instanceUrl, parsed.data.hashtag, parsed.data.limit);
-    } else {
-      posts = await fetchPublicTimeline(parsed.data.instanceUrl, parsed.data.limit);
+    try {
+      if (parsed.data.mode === "hashtag" && parsed.data.hashtag) {
+        posts = await searchHashtag(parsed.data.instanceUrl, parsed.data.hashtag, parsed.data.limit);
+      } else {
+        posts = await fetchPublicTimeline(parsed.data.instanceUrl, parsed.data.limit);
+      }
+    } catch (fetchErr) {
+      return NextResponse.json({
+        instance: { title: instance.title, host, users: instance.stats.user_count, statuses: instance.stats.status_count },
+        imported: 0,
+        authors: 0,
+        details: [],
+        error: fetchErr instanceof Error ? fetchErr.message : "Failed to fetch posts"
+      }, { status: 200 });
     }
 
     if (posts.length === 0) {
       return NextResponse.json({
         instance: { title: instance.title, host, users: instance.stats.user_count, statuses: instance.stats.status_count },
         imported: 0,
-        posts: []
+        authors: 0,
+        details: []
       });
     }
 
