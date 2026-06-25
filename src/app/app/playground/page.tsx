@@ -38,7 +38,7 @@ const SAMPLE_PROMPTS = [
   "Summarize the latest thinking on stablecoin payment rails.",
   "What is changing in agent-to-agent payments on Arc?",
   "Explain how x402 nanopayments settle offchain authorizations.",
-  "Compare AgentKit&apos;s wallet approach to developer-controlled wallets."
+  "Compare AgentKit wallet approach to developer-controlled wallets."
 ];
 
 export default function PlaygroundPage() {
@@ -57,16 +57,24 @@ export default function PlaygroundPage() {
     setRunning(true);
     setError(null);
     try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 45_000);
       const response = await fetch("/api/agent/answer", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ query, budgetUsd: budget })
+        body: JSON.stringify({ query, budgetUsd: budget }),
+        signal: controller.signal
       });
+      clearTimeout(timer);
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Run failed");
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
       setResult(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Run failed");
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setError("Request timed out after 45 seconds. Try a shorter query or lower budget.");
+      } else {
+        setError(err instanceof Error ? err.message : "Run failed");
+      }
     } finally {
       setRunning(false);
     }
