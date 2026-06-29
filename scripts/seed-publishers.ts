@@ -3,6 +3,7 @@ import { config as loadEnv } from "dotenv";
 import { importRssFeed } from "../src/lib/rss";
 import { getStore } from "../src/lib/db";
 import { randomToken, sha256 } from "../src/lib/crypto";
+import { seedCuratedSources } from "./seed-curated-sources";
 
 loadEnv({ path: ".env.local" });
 loadEnv({ path: ".env" });
@@ -130,6 +131,9 @@ async function main() {
   if (stats.failed.length > 0) {
     console.log("Some feeds failed; they can be retried once their host is reachable.");
   }
+  const curated = await seedCuratedSources();
+  console.log("\ncurated source seed");
+  console.log(JSON.stringify(curated, null, 2));
   // Touch randomToken to keep import side-effect on Tree-shaking.
   void randomToken;
 }

@@ -14,7 +14,17 @@ type AgentResult = {
   spentMicroUsdc: number;
   cacheEvents: number;
   reasoningUsed: boolean;
-  balanceMicroUsdc?: number;
+  retrieval: {
+    status: "answered" | "no_coverage" | "provider_fallback";
+    candidateCount: number;
+    paidCardCount: number;
+    composer: "dgrid" | "extractive" | "none";
+    message: string;
+  };
+  account?: {
+    id: string;
+    balanceMicroUsdc: number;
+  };
   ledger: Array<{
     sourceId: string;
     title: string;
@@ -59,21 +69,32 @@ export default function PlaygroundPage() {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 45_000);
-      const response = await fetch("/api/agent/answer", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ query, budgetUsd: budget }),
-        signal: controller.signal
-      });
-      clearTimeout(timer);
-      const data = await response.json();
+      let response: Response;
+      try {
+        response = await fetch("/api/agent/answer", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ query, budgetUsd: budget }),
+          signal: controller.signal
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+      const raw = await response.text();
+      let data: { error?: string } & Partial<AgentResult> = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {
+        throw new Error(raw.slice(0, 180) || `HTTP ${response.status}`);
+      }
       if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-      setResult(data);
+      setResult(data as AgentResult);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
-        setError("Request timed out after 45 seconds. Try a shorter query or lower budget.");
+        setError("The agent route did not finish within 45 seconds. The server keeps each LLM stage bounded; if this persists, check Vercel function logs and payment provider latency.");
       } else {
-        setError(err instanceof Error ? err.message : "Run failed");
+        const message = err instanceof Error ? err.message : "Run failed";
+        setError(message === "Failed to fetch" ? "The browser could not reach the agent route. Check the deployment URL and function logs." : message);
       }
     } finally {
       setRunning(false);
@@ -148,13 +169,22 @@ export default function PlaygroundPage() {
                 <div className="flex items-center justify-between text-xs text-zinc-500 mb-3">
                   <span>
                     Run {result.runId.slice(0, 8)} · spent {formatMicroUsdc(result.spentMicroUsdc)} · {result.cacheEvents} cache hit{result.cacheEvents === 1 ? "" : "s"}
-                    {result.balanceMicroUsdc != null && (
-                      <> · balance {formatMicroUsdc(result.balanceMicroUsdc)}</>
+                    {result.account && (
+                      <> · balance {formatMicroUsdc(result.account.balanceMicroUsdc)}</>
                     )}
                   </span>
-                  {result.reasoningUsed && (
-                    <span className="chip chip-accent">LLM reasoning</span>
-                  )}
+                  <span className={`chip ${result.retrieval.status === "answered" ? "chip-accent" : ""}`}>
+                    {result.retrieval.status === "no_coverage"
+                      ? "No coverage"
+                      : result.retrieval.status === "provider_fallback"
+                        ? "Fallback composer"
+                        : result.reasoningUsed
+                          ? "LLM reasoning"
+                          : "Answered"}
+                  </span>
+                </div>
+                <div className="mb-4 rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-xs text-zinc-400">
+                  {result.retrieval.message} · {result.retrieval.candidateCount} candidate{result.retrieval.candidateCount === 1 ? "" : "s"} · {result.retrieval.paidCardCount} paid card{result.retrieval.paidCardCount === 1 ? "" : "s"}
                 </div>
                 <article className="prose prose-invert max-w-none text-sm text-zinc-200 leading-relaxed whitespace-pre-wrap">
                   {result.answer}

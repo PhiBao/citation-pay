@@ -131,6 +131,7 @@ export async function dispatchTool(
           spent: formatMicroUsdc(result.spentMicroUsdc),
           cacheEvents: result.cacheEvents,
           reasoningUsed: result.reasoningUsed,
+          retrieval: result.retrieval,
           balance: result.account ? formatMicroUsdc(result.account.balanceMicroUsdc) : null,
           ledger: result.ledger,
           decisions: result.decisions

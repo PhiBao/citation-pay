@@ -3,6 +3,7 @@ import path from "node:path";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { nowIso, sha256, uuid } from "@/lib/crypto";
 import { hasSupabaseEnv } from "@/lib/env";
+import { querySearchClauses, rankSources } from "@/lib/search";
 import type {
   Account,
   AccountApiKey,
@@ -356,21 +357,16 @@ class SupabaseStore implements Store {
   }
 
   async searchSources(query: string, limit: number) {
-    const terms = query
-      .split(/\W+/)
-      .filter((term) => term.length > 2)
-      .slice(0, 6)
-      .map((term) => term.replace(/[%*,()]/g, ""));
-    let request = this.client
+    const terms = querySearchClauses(query);
+    if (terms.length === 0) return [];
+
+    const { data, error } = await this.client
       .from("sources")
       .select("*, publisher:publishers(id,name,wallet_address)")
-      .limit(limit);
-    if (terms.length > 0) {
-      request = request.or(terms.map((term) => `search_text.ilike.%${term}%`).join(","));
-    }
-    const { data, error } = await request;
+      .or(terms.map((term) => `search_text.ilike.%${term}%`).join(","))
+      .limit(Math.max(limit * 25, 500));
     if (error) throw new Error(error.message);
-    return (data || []) as SourceWithPublisher[];
+    return rankSources(query, (data || []) as SourceWithPublisher[], limit);
   }
 
   async getSource(id: string) {
@@ -951,17 +947,7 @@ class JsonFileStore implements Store {
 
   async searchSources(query: string, limit: number) {
     const data = await this.load();
-    const terms = query.toLowerCase().split(/\W+/).filter(Boolean);
-    const scored = data.sources
-      .map((source) => ({
-        source,
-        score: terms.reduce((score, term) => score + (source.search_text.toLowerCase().includes(term) ? 1 : 0), 0)
-      }))
-      .filter((entry) => entry.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .map((entry) => entry.source)
-      .slice(0, limit);
-    return withPublishers(data, scored.length > 0 ? scored : data.sources.slice(0, limit));
+    return rankSources(query, withPublishers(data, data.sources), limit);
   }
 
   async getSource(id: string) {

@@ -8,6 +8,10 @@ const schema = z.object({
   budgetUsd: z.coerce.number().positive().max(100)
 });
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
 export async function POST(request: Request) {
   try {
     const parsed = schema.safeParse(await request.json());

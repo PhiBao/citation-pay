@@ -111,6 +111,7 @@ export async function buildServerForSession(session: AccountSession) {
           answer: result.answer,
           spent: formatMicroUsdc(result.spentMicroUsdc),
           cacheEvents: result.cacheEvents,
+          retrieval: result.retrieval,
           balance: result.account ? formatMicroUsdc(result.account.balanceMicroUsdc) : null,
           decisions: result.decisions
         });
@@ -137,6 +138,7 @@ export async function buildServerForSession(session: AccountSession) {
           answer: result.answer,
           spent: formatMicroUsdc(result.spentMicroUsdc),
           cacheEvents: result.cacheEvents,
+          retrieval: result.retrieval,
           balance: result.account ? formatMicroUsdc(result.account.balanceMicroUsdc) : null,
           ledger: result.ledger,
           decisions: result.decisions

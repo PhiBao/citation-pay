@@ -104,7 +104,7 @@ Paste an RSS feed URL on `/publish`. Posts become priced sources. Works with Gho
 pnpm install
 cp .env.example .env.local
 # Fill in your Supabase and Circle credentials
-pnpm seed     # Imports 9 real RSS feeds
+pnpm seed     # Imports 9 real RSS feeds + curated x402/AgentKit docs
 pnpm dev
 ```
 
@@ -134,7 +134,7 @@ Your Arc wallet address is visible on the account page (`/app`) and deposit page
 
 Go to `/app/playground`. Enter a research query and a max spend. Click "Run paid answer."
 
-The agent searches sources from seeded RSS feeds and Mastodon imports, invokes an LLM cost/benefit step, pays per citation via x402 on Arc, and composes a cited answer. The decision ledger shows why the AI paid or skipped each source. Cache hits are free.
+The agent searches sources from seeded RSS feeds, curated official docs, and Mastodon imports. It invokes a bounded LLM cost/benefit step when available, falls back to deterministic scoring/composition when DGrid is slow, pays per citation via x402 on Arc, and composes a cited answer. The decision ledger shows why the AI paid or skipped each source. Cache hits are free.
 
 ### 4. Import from Mastodon
 
@@ -370,6 +370,8 @@ CIRCLE_KIT_KEY=...
 DGRID_API_KEY=...
 DGRID_MODEL=openai/gpt-4o
 DGRID_BASE_URL=https://api.dgrid.ai/v1
+DGRID_DECISION_TIMEOUT_MS=5500
+DGRID_COMPOSE_TIMEOUT_MS=8000
 
 # Admin
 ADMIN_TOKEN=...
@@ -392,8 +394,11 @@ cp .env.example .env.local
 # Run database migrations (requires SUPABASE_ACCESS_TOKEN)
 pnpm tsx scripts/apply-migration.ts supabase/migrations/20260624000000_auth_and_wallets.sql
 
-# Seed real publisher RSS feeds (9 feeds, 249 sources)
+# Seed real publisher RSS feeds plus curated official x402/AgentKit docs
 pnpm seed
+
+# Or only backfill the curated docs for an existing deployment
+pnpm seed:curated
 
 pnpm dev
 ```
@@ -414,7 +419,7 @@ The app auto-detects available services and gracefully degrades when credentials
 
 ### Vercel (web app + API)
 
-`vercel.json` is pre-configured. The MCP endpoint is stateless — no session persistence needed. Key config:
+`vercel.json` is pre-configured. The agent answer route exports `maxDuration = 60` and bounds each DGrid stage so Vercel should return a structured fallback/no-coverage result instead of a raw function timeout. The MCP endpoint is stateless — no session persistence needed. Key config:
 
 ```json
 {

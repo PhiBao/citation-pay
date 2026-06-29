@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "seed": "tsx scripts/seed-publishers.ts"
+    "seed": "tsx scripts/seed-publishers.ts",
+    "seed:curated": "tsx scripts/seed-curated-sources.ts"
   },
   "dependencies": {
     "@circle-fin/adapter-viem-v2": "^1.11.2",

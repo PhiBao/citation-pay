@@ -2,6 +2,7 @@ import { getStore } from "@/lib/db";
 import { payForSource } from "@/lib/payment";
 import { formatMicroUsdc } from "@/lib/price";
 import { assertAccountCanSpendToday, debitAccountForRun, type AccountSession } from "@/lib/accounts";
+import { scoreSource } from "@/lib/search";
 import type { AgentDecision, PaidSourceCard, PaymentReceipt, SourceWithPublisher } from "@/lib/types";
 
 export type AgentResult = {
@@ -27,6 +28,7 @@ export type AgentResult = {
     price: string;
     receipt: string;
   }>;
+  retrieval: RetrievalSummary;
   account?: {
     id: string;
     balanceMicroUsdc: number;
@@ -40,6 +42,20 @@ type LlmDecision = {
   verdict: "pay" | "skip";
   confidence: number;
   reasoning: string;
+};
+
+type RetrievalSummary = {
+  status: "answered" | "no_coverage" | "provider_fallback";
+  candidateCount: number;
+  paidCardCount: number;
+  composer: "dgrid" | "extractive" | "none";
+  message: string;
+};
+
+type ComposeResult = {
+  answer: string;
+  composer: RetrievalSummary["composer"];
+  message: string;
 };
 
 export async function runCitationAgent(
@@ -58,7 +74,7 @@ export async function runCitationAgent(
   });
 
   try {
-    const candidates = await store.searchSources(query, 16);
+    const candidates = await store.searchSources(query, 32);
     const llmDecisions = await decideWithLlm(query, candidates, budgetMicroUsdc).catch(() => []);
     const evaluated = evaluateSources(query, candidates, budgetMicroUsdc, llmDecisions);
     const selected = evaluated.filter((decision) => decision.action === "paid").slice(0, 4);
@@ -142,15 +158,29 @@ export async function runCitationAgent(
       paidCards.push(sourceToCard(decision.source));
     }
 
-    const answer = await composePaidAnswer(query, paidCards, budgetMicroUsdc, spent);
-    await store.finishRun(run.id, "complete", answer, spent);
+    const composition = await composePaidAnswerResult(query, paidCards, budgetMicroUsdc, spent);
+    await store.finishRun(run.id, "complete", composition.answer, spent);
     const account = context?.session
-      ? await debitAccountForRun(context.session.account, run, spent)
+      ? spent > 0
+        ? await debitAccountForRun(context.session.account, run, spent)
+        : context.session.account
       : null;
+    const retrieval: RetrievalSummary = {
+      status:
+        paidCards.length === 0
+          ? "no_coverage"
+          : composition.composer === "dgrid"
+            ? "answered"
+            : "provider_fallback",
+      candidateCount: candidates.length,
+      paidCardCount: paidCards.length,
+      composer: composition.composer,
+      message: composition.message
+    };
 
     return {
       runId: run.id,
-      answer,
+      answer: composition.answer,
       spentMicroUsdc: spent,
       cacheEvents,
       reasoningUsed: llmDecisions.length > 0,
@@ -175,6 +205,7 @@ export async function runCitationAgent(
         price: formatMicroUsdc(decision.source.price_micro_usdc),
         receipt: receipt.transferId
       })),
+      retrieval,
       account: account
         ? {
             id: account.id,
@@ -202,21 +233,17 @@ export function evaluateSources(
   llmDecisions: LlmDecision[] = []
 ): EvaluatedDecision[] {
   const llmMap = new Map(llmDecisions.map((d) => [d.sourceId, d]));
-  const terms = query.toLowerCase().split(/\W+/).filter((term) => term.length > 2);
   const ranked = sources
     .map((source) => {
-      const haystack = `${source.title} ${source.excerpt} ${source.publisher.name}`.toLowerCase();
-      const relevance = terms.reduce((sum, term) => sum + (haystack.includes(term) ? 8 : 0), 0);
-      const freshness = freshnessBoost(source.published_at);
+      const relevance = scoreSource(query, source);
       const priceFit = source.price_micro_usdc <= Math.max(1, budgetMicroUsdc / 4) ? 6 : 0;
       const publisherSignal = source.publisher.name ? 2 : 0;
       const llm = llmMap.get(source.id);
       const llmBoost = llm ? llm.confidence * 10 : 0;
       return {
         source,
-        score: relevance + freshness + priceFit + publisherSignal + llmBoost,
+        score: relevance + priceFit + publisherSignal + llmBoost,
         relevance,
-        freshness,
         priceFit,
         llm
       };
@@ -230,7 +257,7 @@ export function evaluateSources(
 
   for (const entry of ranked) {
     const paidCount = decisions.filter((decision) => decision.action === "paid").length;
-    const scoreBreakdown = `${entry.relevance} relevance, ${entry.freshness} freshness, ${entry.priceFit} price-fit${entry.llm ? `, ${entry.llm.confidence} LLM confidence` : ""}`;
+    const scoreBreakdown = `${entry.relevance} search-match, ${entry.priceFit} price-fit${entry.llm ? `, ${entry.llm.confidence} LLM confidence` : ""}`;
 
     if (paidCount >= 4) {
       decisions.push({
@@ -288,8 +315,21 @@ export async function composePaidAnswer(
   budgetMicroUsdc: number,
   spentMicroUsdc: number
 ) {
+  return (await composePaidAnswerResult(query, cards, budgetMicroUsdc, spentMicroUsdc)).answer;
+}
+
+async function composePaidAnswerResult(
+  query: string,
+  cards: PaidSourceCard[],
+  budgetMicroUsdc: number,
+  spentMicroUsdc: number
+): Promise<ComposeResult> {
   if (cards.length === 0) {
-    return `No paid citations were purchased. The agent found no relevant sources within the ${formatMicroUsdc(budgetMicroUsdc)} budget.`;
+    return {
+      answer: `No paid citations were purchased.\n\nCitationPay found no priced publisher sources that matched "${query}" within the current source graph. Import a trusted RSS or Mastodon source for this topic, or seed official documentation sources, then run the query again.\n\nSpent ${formatMicroUsdc(spentMicroUsdc)} of ${formatMicroUsdc(budgetMicroUsdc)}.`,
+      composer: "none",
+      message: "No priced CitationPay source matched the query."
+    };
   }
 
   if (process.env.DGRID_API_KEY) {
@@ -298,7 +338,11 @@ export async function composePaidAnswer(
       return "";
     });
     if (content) {
-      return `${content}\n\nSpent ${formatMicroUsdc(spentMicroUsdc)} of ${formatMicroUsdc(budgetMicroUsdc)}.`;
+      return {
+        answer: `${content}\n\nSpent ${formatMicroUsdc(spentMicroUsdc)} of ${formatMicroUsdc(budgetMicroUsdc)}.`,
+        composer: "dgrid",
+        message: "Composed with DGrid from paid source cards."
+      };
     }
   }
 
@@ -306,7 +350,13 @@ export async function composePaidAnswer(
     .map((card, index) => `[${index + 1}] ${card.title}: ${card.excerpt}`)
     .join("\n\n");
   const citations = cards.map((card, index) => `[${index + 1}] ${card.canonicalUrl}`).join("\n");
-  return `Question: ${query}\n\nPaid answer draft:\n${bullets}\n\nCitations:\n${citations}\n\nSpent ${formatMicroUsdc(spentMicroUsdc)} of ${formatMicroUsdc(budgetMicroUsdc)}.`;
+  return {
+    answer: `Question: ${query}\n\nPaid answer draft:\n${bullets}\n\nCitations:\n${citations}\n\nSpent ${formatMicroUsdc(spentMicroUsdc)} of ${formatMicroUsdc(budgetMicroUsdc)}.`,
+    composer: "extractive",
+    message: process.env.DGRID_API_KEY
+      ? "DGrid was unavailable or timed out; used deterministic extractive composition."
+      : "DGrid is not configured; used deterministic extractive composition."
+  };
 }
 
 type DgridChatResponse = {
@@ -341,7 +391,7 @@ async function composeWithDgrid(query: string, cards: PaidSourceCard[]) {
         }
       ]
     }),
-    signal: AbortSignal.timeout(20_000)
+    signal: AbortSignal.timeout(dgridComposeTimeoutMs())
   });
 
   if (!response.ok) {
@@ -377,14 +427,6 @@ function sourceToCard(source: SourceWithPublisher): PaidSourceCard {
     publisherName: source.publisher.name,
     priceMicroUsdc: source.price_micro_usdc
   };
-}
-
-function freshnessBoost(date: string | null) {
-  if (!date) return 0;
-  const ageDays = (Date.now() - new Date(date).getTime()) / 86_400_000;
-  if (ageDays < 14) return 8;
-  if (ageDays < 90) return 4;
-  return 0;
 }
 
 async function decideWithLlm(
@@ -437,7 +479,7 @@ Return ONLY a JSON array of these objects. No markdown, no other text.`;
           { role: "user", content: userPrompt }
         ]
       }),
-      signal: AbortSignal.timeout(15_000)
+      signal: AbortSignal.timeout(dgridDecisionTimeoutMs())
     });
 
     if (!response.ok) {
@@ -457,6 +499,19 @@ Return ONLY a JSON array of these objects. No markdown, no other text.`;
   } catch {
     return [];
   }
+}
+
+function dgridDecisionTimeoutMs() {
+  return envPositiveInteger("DGRID_DECISION_TIMEOUT_MS", 5_500);
+}
+
+function dgridComposeTimeoutMs() {
+  return envPositiveInteger("DGRID_COMPOSE_TIMEOUT_MS", 8_000);
+}
+
+function envPositiveInteger(name: string, fallback: number) {
+  const value = Number(process.env[name] || "");
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
 function extractJson(text: string): string | null {
