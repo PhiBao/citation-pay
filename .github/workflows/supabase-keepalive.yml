@@ -1,26 +1,38 @@
-name: Supabase Keepalive
+name: Supabase keepalive
 
 on:
   schedule:
-    - cron: "17 6 */3 * *"
+    - cron: "0 6 */3 * *"
   workflow_dispatch:
 
 jobs:
   ping:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
     steps:
-      - name: Query CitationPay table
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Keep Supabase alive
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
-          set -euo pipefail
-          test -n "$SUPABASE_URL"
-          test -n "$SUPABASE_SERVICE_ROLE_KEY"
-          curl --fail --silent --show-error \
-            "$SUPABASE_URL/rest/v1/publishers?select=id&limit=1" \
-            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
-            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
-            -H "Accept: application/json" \
-            >/dev/null
+          # REST API ping (wakes PostgREST → wakes Postgres)
+          echo "Pinging via REST API..."
+          curl -sf -X GET "${SUPABASE_URL}/rest/v1/accounts?select=count&limit=1" \
+            -H "apikey: ${SUPABASE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_KEY}" || echo "REST ping failed"
+
+          # Management API SQL query (definitely touches the database engine)
+          REF=$(echo "${SUPABASE_URL}" | sed 's|https://||' | cut -d. -f1)
+          if [ -n "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "Pinging via Management API..."
+            curl -sf -X POST "https://api.supabase.com/v1/projects/${REF}/database/query" \
+              -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d '{"query":"select count(*) as count from accounts"}' || echo "Management ping failed"
+          fi
+
+          echo "Keepalive complete."

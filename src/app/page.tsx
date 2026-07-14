@@ -21,20 +21,20 @@ import { useSession } from "@/components/session-provider";
 import { formatMicroUsdc, shortAddress } from "@/lib/price";
 
 type DashboardData = {
-  accounts: Array<{ id: string; created_at: string }>;
-  publishers: Array<{ id: string; name: string; wallet_address: string; default_price_micro_usdc: number }>;
-  feeds: Array<{ id: string; status: string }>;
-  sources: Array<{ id: string; price_micro_usdc: number; publisher: { name: string } }>;
-  runs: Array<{ id: string; created_at: string; query: string; spent_micro_usdc: number; status: string; client_type: string }>;
-  payments: Array<{
-    id: string;
-    amount_micro_usdc: number;
-    status: string;
-    created_at: string;
-    source?: { title: string; publisher: { name: string } };
-  }>;
-  decisions: unknown[];
-  cache: unknown[];
+  summary: {
+    totalVolume: number;
+    totalPaidCitations: number;
+    totalCacheHits: number;
+    totalAccounts: number;
+    activeAccounts: number;
+    totalPublishers: number;
+    activePublishers: number;
+    totalSources: number;
+    totalFeeds: number;
+    recentRuns: Array<{ id: string; query: string; spent: number; budget: number; status: string; client: string; createdAt: string }>;
+    recentPayments: Array<{ id: string; amount: number; network: string; status: string; title?: string; publisher?: string; createdAt: string }>;
+    topPublishers: Array<{ name: string; citations: number; volume: number }>;
+  } | null;
   health: { database: string; error: string | null };
   paymentMode: string;
 };
@@ -50,20 +50,23 @@ export default function LandingPage() {
       .catch(() => setData(null));
   }, []);
 
-  const totals = data
+  const totals = data?.summary
     ? {
-        publishers: data.publishers.length,
-        sources: data.sources.length,
-        paidCitations: data.payments.length,
-        volume: data.payments.reduce((s, p) => s + p.amount_micro_usdc, 0),
-        runs: data.runs.length
+        publishers: data.summary.activePublishers,
+        sources: data.summary.totalSources,
+        paidCitations: data.summary.totalPaidCitations,
+        volume: data.summary.totalVolume,
+        runs: data.summary.recentRuns.filter((r) => r.status === "complete").length,
+        accounts: data.summary.totalAccounts,
+        feeds: data.summary.totalFeeds,
+        cacheHits: data.summary.totalCacheHits
       }
     : null;
 
   return (
     <div>
       <Hero signedIn={status === "authenticated"} />
-      <LiveProof totals={totals} mode={data?.paymentMode} />
+      <LiveProof totals={totals} mode={data?.paymentMode} summary={data?.summary ?? null} />
       <HowItWorks />
       <StackSection />
       <FediverseSection />
@@ -180,7 +183,24 @@ function Step({
   );
 }
 
-function LiveProof({ totals, mode }: { totals: { publishers: number; sources: number; paidCitations: number; volume: number; runs: number } | null; mode: string | undefined }) {
+function LiveProof({
+  totals,
+  mode,
+  summary
+}: {
+  totals: {
+    publishers: number;
+    sources: number;
+    paidCitations: number;
+    volume: number;
+    runs: number;
+    accounts: number;
+    feeds: number;
+    cacheHits: number;
+  } | null;
+  mode: string | undefined;
+  summary: DashboardData["summary"];
+}) {
   return (
     <section className="border-t border-zinc-900">
       <div className="mx-auto max-w-[1200px] px-5 py-14">
@@ -191,16 +211,50 @@ function LiveProof({ totals, mode }: { totals: { publishers: number; sources: nu
         {totals ? (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-px bg-zinc-900 panel overflow-hidden">
             <Stat label="Publishers" value={totals.publishers.toString()} />
-            <Stat label="Priced sources" value={totals.sources.toString()} />
+            <Stat label="Sources" value={totals.sources.toString()} />
             <Stat label="Paid citations" value={totals.paidCitations.toString()} />
             <Stat label="Volume" value={formatMicroUsdc(totals.volume)} accent />
-            <Stat label="Agent runs" value={totals.runs.toString()} />
+            <Stat label="Accounts" value={totals.accounts.toString()} />
           </div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {Array.from({ length: 5 }).map((_, i) => (
               <div key={i} className="panel p-5 h-[90px] animate-pulse bg-zinc-900/50" />
             ))}
+          </div>
+        )}
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="panel-2 p-3">
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Feeds</div>
+            <div className="mt-1 text-sm text-zinc-200">{totals?.feeds ?? "—"} active</div>
+          </div>
+          <div className="panel-2 p-3">
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Cache hits</div>
+            <div className="mt-1 text-sm text-zinc-200">{totals?.cacheHits ?? "—"}</div>
+          </div>
+          <div className="panel-2 p-3">
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500">Completed runs</div>
+            <div className="mt-1 text-sm text-zinc-200">{totals?.runs ?? "—"}</div>
+          </div>
+        </div>
+        {summary?.recentPayments && summary.recentPayments.length > 0 && (
+          <div className="mt-4">
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Recent activity</div>
+            <div className="panel-2 divide-y divide-zinc-900 text-xs">
+              {summary.recentPayments.slice(0, 5).map((p) => (
+                <div key={p.id} className="flex items-center justify-between px-3 py-2">
+                  <div className="flex-1 min-w-0 mr-3">
+                    <span className="text-zinc-300 truncate block">
+                      {p.title || "Citation"}
+                    </span>
+                    <span className="text-zinc-500">{p.publisher} · {p.network}</span>
+                  </div>
+                  <span className="amount text-emerald-300 whitespace-nowrap">
+                    {formatMicroUsdc(p.amount)}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
         <p className="mt-3 text-xs text-zinc-500">
